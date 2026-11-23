@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CvSU CSSO Usher QR Scanner</title>
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="./vendor/html5-qrcode.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -151,15 +151,16 @@
 
       <div id="cameraPickerWrap" style="display:none;">
         <label for="cameraSelect">Camera</label>
-        <select id="cameraSelect"></select>
+        <select id="cameraSelect" onchange="switchCamera()"></select>
       </div>
 
       <div class="btn-row">
-        <button type="button" onclick="startCamera()">Start Camera</button>
+        <button id="startCamBtn" type="button" onclick="startCamera()">Start Camera</button>
         <button type="button" class="secondary" onclick="stopCamera()">Pause Camera</button>
       </div>
       <div id="reader"></div>
       <div id="statusNote" class="status-note">Ready. Tap Start Camera to grant permission and scan.</div>
+      <div id="apiVersionNote" class="status-note" style="font-size:11px; opacity:0.75;"></div>
     </div>
 
     <div class="card">
@@ -177,9 +178,11 @@
   const API_URL = new URLSearchParams(window.location.search).get('api') || DEFAULT_API_URL;
   const SESSION_KEY = 'csso_session_token';
   const CAMERA_COOLDOWN_MS = 4000;
+  const FETCH_TIMEOUT_MS = 15000;
 
   let html5QrCode = null;
   let isProcessing = false;
+  let isStarting = false;
   let sessionToken = '';
   let lastCameraPayload = '';
   let lastCameraTime = 0;
@@ -187,16 +190,28 @@
   let audioCtx = null;
 
   async function apiCall(body) {
-    const resp = await fetch(API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify(body),
-      redirect: 'follow'
-    });
-    if (!resp.ok) {
-      throw new Error('Server HTTP ' + resp.status);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const resp = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(body),
+        redirect: 'follow',
+        signal: ctrl.signal
+      });
+      if (!resp.ok) {
+        throw new Error('Server HTTP ' + resp.status);
+      }
+      return await resp.json();
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        throw new Error('Request timed out after 15s. Check Wi-Fi and try again.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-    return resp.json();
   }
 
   function playTone(type) {
@@ -293,16 +308,21 @@
   }
 
   async function startCamera() {
+    if (isStarting) return;
+    isStarting = true;
+    const btn = document.getElementById('startCamBtn');
+    if (btn) btn.disabled = true;
     const statusEl = document.getElementById('statusNote');
-    if (!html5QrCode) {
-      html5QrCode = new Html5Qrcode('reader');
-    }
-    if (html5QrCode.isScanning) {
-      await stopCamera();
-    }
 
-    statusEl.textContent = 'Requesting camera permission...';
     try {
+      if (!html5QrCode) {
+        html5QrCode = new Html5Qrcode('reader');
+      }
+      if (html5QrCode.isScanning) {
+        await stopCamera();
+      }
+
+      statusEl.textContent = 'Requesting camera permission...';
       const devices = await Html5Qrcode.getCameras();
       const select = document.getElementById('cameraSelect');
       const wrap = document.getElementById('cameraPickerWrap');
@@ -331,7 +351,22 @@
       );
       statusEl.textContent = 'Scanning active.';
     } catch (err) {
-      statusEl.textContent = 'Camera error: ' + (err && err.message ? err.message : err);
+      const msg = String(err && err.message ? err.message : err);
+      if (/NotAllowedError|Permission/i.test(msg)) {
+        statusEl.textContent = 'Camera permission denied. Allow camera in browser site settings or use Manual Pass Code below.';
+      } else {
+        statusEl.textContent = 'Camera error: ' + msg;
+      }
+    } finally {
+      isStarting = false;
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function switchCamera() {
+    if (html5QrCode && html5QrCode.isScanning) {
+      await stopCamera();
+      await startCamera();
     }
   }
 
@@ -421,7 +456,10 @@
         REJECTED_MALFORMED: 'MALFORMED QR',
         REJECTED_NOT_IN_ROSTER: 'NOT IN ROSTER',
         REJECTED_STAGE_LOCKED: 'STAGE LOCKED',
-        REJECTED_STAGE_ORDER: 'OUT OF ORDER'
+        REJECTED_STAGE_ORDER: 'OUT OF ORDER',
+        REJECTED_WRONG_EVENT: 'WRONG EVENT',
+        REJECTED_V1_RETIRED: 'LEGACY PASS RETIRED',
+        INTERNAL_ERROR: 'SERVER ERROR'
       };
       banner.classList.add('res-bad');
       title.textContent = 'REJECTED';
@@ -431,8 +469,16 @@
     }
   }
 
-  // Auto-restore session on page reload
+  // Check backend health & auto-restore session on page reload
   (async function initSession() {
+    try {
+      const ping = await apiCall({ action: 'ping' });
+      const note = document.getElementById('apiVersionNote');
+      if (ping && ping.ok && note) {
+        note.textContent = `Backend: ${ping.version || 'connected'} (Event: ${ping.eventId || 'DEFAULT'})`;
+      }
+    } catch (e) {}
+
     let saved = '';
     try { saved = sessionStorage.getItem(SESSION_KEY) || ''; } catch (e) {}
     if (!saved) return;

@@ -184,12 +184,16 @@
         <option value="Check-Out">Check-Out</option>
       </select>
 
-      <div class="btn-row">
-        <button type="button" onclick="startCamera()">Start Camera</button>
-        <button type="button" class="secondary" onclick="stopCamera()">Pause Camera</button>
+      <div style="background:#172554; border:1px solid #3b82f6; border-radius:10px; padding:10px 12px; font-size:13px; margin-bottom:12px;">
+        For continuous live camera scanning, open the
+        <a href="https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/" target="_blank" rel="noopener noreferrer" style="color:#93c5fd; font-weight:700;">HTTPS Usher Scanner</a>
+        (Google Apps Script iframes block live video permissions).
       </div>
-      <div id="reader"></div>
-      <div id="statusNote" class="status-note">Ready.</div>
+
+      <label for="qrFileInput">Photo-Scan Fallback (Take / Upload QR Photo)</label>
+      <input id="qrFileInput" type="file" accept="image/*" capture="environment" onchange="scanPhotoFile(event)" />
+      <div id="reader" style="display:none;"></div>
+      <div id="statusNote" class="status-note">Ready (Fallback UI).</div>
     </div>
 
     <div class="card">
@@ -311,29 +315,28 @@
       .verifyUsherPin(pin, usherName);
   }
 
-  function startCamera() {
+  function scanPhotoFile(ev) {
+    const file = ev && ev.target && ev.target.files ? ev.target.files[0] : null;
+    if (!file) return;
+    const statusEl = document.getElementById('statusNote');
+    statusEl.textContent = 'Decoding QR photo...';
     if (!html5QrCode) {
       html5QrCode = new Html5Qrcode('reader');
     }
-    document.getElementById('statusNote').textContent = 'Starting rear camera...';
-    html5QrCode.start(
-      { facingMode: 'environment' },
-      { fps: 10, qrbox: { width: 240, height: 240 } },
-      onScanSuccess,
-      () => {}
-    ).then(() => {
-      document.getElementById('statusNote').textContent = 'Scanning active.';
-    }).catch(err => {
-      document.getElementById('statusNote').textContent = 'Camera error: ' + err;
-    });
+    html5QrCode.scanFile(file, false)
+      .then(decodedText => {
+        submitScan(decodedText, true);
+      })
+      .catch(err => {
+        statusEl.textContent = 'Could not read QR from photo: ' + (err && err.message ? err.message : err);
+      })
+      .finally(() => {
+        ev.target.value = '';
+      });
   }
 
   function stopCamera() {
-    if (html5QrCode && html5QrCode.isScanning) {
-      html5QrCode.stop().then(() => {
-        document.getElementById('statusNote').textContent = 'Camera paused.';
-      }).catch(() => {});
-    }
+    // No live stream active in fallback GAS iframe UI
   }
 
   function onScanSuccess(decodedText) {
@@ -415,7 +418,9 @@
         REJECTED_MALFORMED: 'MALFORMED QR',
         REJECTED_NOT_IN_ROSTER: 'NOT IN ROSTER',
         REJECTED_STAGE_LOCKED: 'STAGE LOCKED',
-        REJECTED_STAGE_ORDER: 'OUT OF ORDER'
+        REJECTED_STAGE_ORDER: 'OUT OF ORDER',
+        REJECTED_WRONG_EVENT: 'WRONG EVENT',
+        REJECTED_V1_RETIRED: 'LEGACY PASS RETIRED'
       };
       banner.classList.add('res-bad');
       title.textContent = 'REJECTED';
