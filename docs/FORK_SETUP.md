@@ -22,13 +22,11 @@ Follow this 2-minute setup to launch your own isolated Event QR Attendance Syste
 
 ---
 
-## Step 3: Create Your Auto-Registration Form & Emailer (1 Click)
-1. *(Optional — for 1,500 emails/day Workspace quota instead of 100/day Gmail quota)*:
-   - Share your copied spreadsheet as **Editor** with your **`@cvsu.edu.ph`** (or Google Workspace) account.
-   - Open the spreadsheet while signed in as that **`@cvsu.edu.ph`** account.
-2. Click **Attendance Scanner → 📝 Setup Registration Form & Auto-Email Trigger**.
+## Step 3: Create Your Registration Form & QR Portal Sync (1 Click)
+1. Click **Attendance Scanner → 📝 Setup Registration Form & Portal Sync**.
    - Creates a Google Form with **verified email collection**, **1 response per student**, and **all required fields** (`Student ID`, `Full Name`, `Section`).
-   - Installs the automatic `onFormSubmit` trigger so every student receives their signed QR Attendance Pass via email immediately upon submitting.
+   - Installs the `onFormSubmit` trigger so every submission immediately syncs into `Roster` (`READY_ON_PORTAL`) with **0 emails used** (unlimited daily registrations!).
+   - Sets the Form confirmation message to direct students straight to the **QR Pass Portal** (`pass.html`) where they enter their Student ID + Email to view and download their signed QR PNG.
    - Saves the shareable Form URL in `Config` (`REGISTRATION_FORM_URL`).
 
 ---

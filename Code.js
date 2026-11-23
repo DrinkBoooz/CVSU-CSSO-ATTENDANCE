@@ -297,7 +297,7 @@ function onOpen() {
     .addItem("Rebuild Verified Attendance", "rebuildVerifiedAttendance")
     .addSeparator()
     .addItem(
-      "📝 Setup Registration Form & Auto-Email Trigger",
+      "📝 Setup Registration Form & Portal Sync",
       "setupRegistrationFormAndTrigger",
     )
     .addItem(
@@ -1504,7 +1504,7 @@ function setupRegistrationFormAndTrigger() {
     form.setDescription(
       `Register for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID}).\n` +
         "All fields are required. You are limited to 1 response. " +
-        "Your signed QR Attendance Pass will be emailed automatically right after submission.",
+        "After submitting, open the QR Pass Portal link on the next screen to view and download your signed QR Attendance Pass.",
     );
     form.setCollectEmail(true);
     form.setLimitOneResponsePerUser(true);
@@ -1567,8 +1567,6 @@ function setupRegistrationFormAndTrigger() {
 
   const publishedUrl = form.getPublishedUrl();
   const editUrl = form.getEditUrl();
-  const senderEmail = Session.getActiveUser().getEmail() || "(current account)";
-  const dailyQuota = MailApp.getRemainingDailyQuota();
 
   // Save Form URL into Config tab for easy reference
   const configSheet = ss.getSheetByName("Config");
@@ -1592,23 +1590,17 @@ function setupRegistrationFormAndTrigger() {
     }
   }
 
-  const quotaHint = /@cvsu\.edu\.ph$/i.test(senderEmail)
-    ? "✅ Workspace @cvsu.edu.ph account active (1,500 emails/day tier)."
-    : "ℹ️ Currently running under a personal Gmail account (100 emails/day tier). To use 1,500/day, share this sheet with your @cvsu.edu.ph account and click this menu item while signed in as @cvsu.edu.ph.";
-
   ui.alert(
     createdNew
       ? "Registration Form Created & Linked"
-      : "Auto-Email Trigger Updated",
-    `Auto-QR email trigger is now ACTIVE!\n\n` +
-      `• Trigger Sender: ${senderEmail}\n` +
-      `• Remaining Daily Email Quota: ${dailyQuota}\n` +
-      `• ${quotaHint}\n\n` +
+      : "Form Portal Sync Trigger Updated",
+    `Zero-Email Registration Form & Roster Sync is now ACTIVE!\n\n` +
+      `Students submit this Form -> auto-syncs to Roster -> download their QR Pass on pass.html (unlimited, 0 emails used).\n\n` +
       `Shareable Form URL (saved in Config):\n${publishedUrl}\n\n` +
       `Form Edit URL:\n${editUrl}`,
     ui.ButtonSet.OK,
   );
-  return { ok: true, formId, publishedUrl, editUrl, senderEmail, dailyQuota };
+  return { ok: true, formId, publishedUrl, editUrl };
 }
 
 /**
@@ -1691,71 +1683,12 @@ function onRegistrationFormSubmit(e) {
       }
     }
 
-    const attemptNum = prevAttempts + 1;
-    let passStatus = "DISPATCHED";
-    let dispatchedAt = "";
-    let lastError = "";
-    let lastSentToken = "";
-    let lastSentId = "";
-
-    const autoEmailSetting = String(cfg.AUTO_EMAIL_ON_SUBMIT || "FALSE")
-      .trim()
-      .toUpperCase();
+    const attemptNum = prevAttempts;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (autoEmailSetting === "FALSE") {
-      passStatus = "READY_ON_PORTAL";
-      lastError = "";
-    } else if (!emailRegex.test(cleanEmail)) {
-      passStatus = "INVALID_EMAIL";
-      lastError = "Invalid email format";
-    } else if (MailApp.getRemainingDailyQuota() <= 0) {
-      passStatus = "READY_ON_PORTAL";
-      lastError = "Email quota reached; pass available on QR Portal";
-    } else {
-      try {
-        const qrBlob = generateQrPngBlob_(payload, `Pass_${studentId}.png`);
-        const subject = `${cfg.EVENT_TITLE} (${issueEventId}) - Your QR Attendance Pass`;
-        const plainBody = [
-          `${cfg.EVENT_TITLE} (${issueEventId})`,
-          `Participant: ${fullName || "Participant"}`,
-          `Student ID: ${studentId}${section ? " | " + section : ""}`,
-          `Manual Pass Code: ${payload}`,
-          "",
-          "Bring your physical School ID. You must be scanned at Check-In, Mid-Event, and Check-Out to qualify.",
-        ].join("\n");
-
-        const htmlBody = `
-          <div style="font-family: Arial, sans-serif; max-width: 420px; margin: 0 auto; border: 1px solid #d0d7de; border-radius: 10px; padding: 20px; text-align: center;">
-            <h2 style="margin: 0 0 8px 0;">${escapeHtml_(cfg.EVENT_TITLE)}</h2>
-            <p style="margin: 0 0 8px 0; font-size: 12px; color: #555;">Event: ${escapeHtml_(issueEventId)}</p>
-            <p style="margin: 4px 0; font-size: 16px;"><strong>${escapeHtml_(fullName || "Participant")}</strong></p>
-            <p style="margin: 4px 0 14px 0; color: #555;">ID: ${escapeHtml_(studentId)}${section ? " | " + escapeHtml_(section) : ""}</p>
-            <img src="cid:qrpass" alt="QR Pass" style="width: 240px; height: 240px;" />
-            <p style="margin: 10px 0 4px 0; font-size: 13px; color: #111;">
-              Manual Pass Code: <code style="background:#f3f4f6; padding:3px 6px; border-radius:4px;">${escapeHtml_(payload)}</code>
-            </p>
-            <p style="margin-top: 10px; font-size: 12px; color: #444; line-height: 1.4;">
-              Save a screenshot of this pass and bring your physical School ID.<br>
-              You must be scanned at <strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong> to qualify.
-            </p>
-          </div>
-        `;
-
-        GmailApp.sendEmail(cleanEmail, subject, plainBody, {
-          htmlBody,
-          inlineImages: { qrpass: qrBlob },
-        });
-        dispatchedAt = new Date().toISOString();
-        lastSentToken = token;
-        lastSentId = studentId;
-      } catch (mailErr) {
-        passStatus = "MAIL_API_ERROR";
-        lastError = String(
-          mailErr && mailErr.message ? mailErr.message : mailErr,
-        ).substring(0, 120);
-      }
-    }
-
+    const passStatus = emailRegex.test(cleanEmail)
+      ? "READY_ON_PORTAL"
+      : "INVALID_EMAIL";
+    const lastError = emailRegex.test(cleanEmail) ? "" : "Invalid email format";
     const rowValues = [
       safeCell_(studentId),
       safeCell_(cleanEmail),
@@ -1764,10 +1697,10 @@ function onRegistrationFormSubmit(e) {
       token,
       passStatus,
       "", // QR Preview preserved
-      lastSentToken,
-      lastSentId,
+      "",
+      "",
       attemptNum,
-      dispatchedAt,
+      "",
       lastError,
       issueProtocol,
       issueEventId,
