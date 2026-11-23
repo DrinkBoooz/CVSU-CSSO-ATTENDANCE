@@ -301,6 +301,10 @@ function onOpen() {
       "setupRegistrationFormAndTrigger",
     )
     .addItem(
+      "🗑️ Replace Registration Form (Trash Old & Create New)",
+      "replaceRegistrationForm",
+    )
+    .addItem(
       "🧹 Clear All Data Rows (Keep Headers & Config)",
       "clearAllDataRows",
     )
@@ -1598,7 +1602,7 @@ function setupRegistrationFormAndTrigger() {
       }
     }
     if (foundRow > 0) {
-      configSheet.getRange(foundRow, 2).setValue(publishedUrl);
+      configSheet.getRange(foundRow, 2, 1, 2).setValues([[publishedUrl, `Linked Form ID: ${formId}`]]);
     } else {
       configSheet.appendRow([
         "REGISTRATION_FORM_URL",
@@ -1619,6 +1623,58 @@ function setupRegistrationFormAndTrigger() {
     ui.ButtonSet.OK,
   );
   return { ok: true, formId, publishedUrl, editUrl };
+}
+
+/**
+ * Unlinks and trashes the previously created Registration Form (and removes its
+ * old Form Responses tab from the spreadsheet), then creates a fresh validated Form.
+ */
+function replaceRegistrationForm() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const props = PropertiesService.getScriptProperties();
+  const oldFormId = props.getProperty("REGISTRATION_FORM_ID") || "";
+
+  const resp = ui.alert(
+    "Replace Registration Form?",
+    "This will unlink the old Registration Form, move it to your Google Drive Trash, delete its old 'Form Responses' tab from this spreadsheet, and create a brand-new validated Form.\n\nContinue?",
+    ui.ButtonSet.YES_NO,
+  );
+  if (resp !== ui.Button.YES) {
+    return { ok: false, reason: "CANCELLED" };
+  }
+
+  let oldFormUrl = "";
+  if (oldFormId) {
+    try {
+      const oldForm = FormApp.openById(oldFormId);
+      oldFormUrl = oldForm.getPublishedUrl() || "";
+      try {
+        oldForm.removeDestination();
+      } catch (e) {}
+    } catch (e) {}
+
+    try {
+      DriveApp.getFileById(oldFormId).setTrashed(true);
+    } catch (e) {
+      // Ignore if already trashed or Drive scope not yet granted
+    }
+  }
+
+  // Delete any old Form Responses tab linked to the old form (or matching Form Responses*)
+  const sheets = ss.getSheets();
+  for (let i = 0; i < sheets.length; i++) {
+    const s = sheets[i];
+    const formUrl = s.getFormUrl ? s.getFormUrl() : null;
+    const isOldLinked = oldFormUrl && formUrl && formUrl === oldFormUrl;
+    const isFormRespTab = /^Form Responses \d+$/i.test(s.getName());
+    if ((isOldLinked || (!oldFormUrl && isFormRespTab)) && ss.getSheets().length > 1) {
+      ss.deleteSheet(s);
+    }
+  }
+
+  props.deleteProperty("REGISTRATION_FORM_ID");
+  return setupRegistrationFormAndTrigger();
 }
 
 /**
