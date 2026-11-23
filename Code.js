@@ -248,15 +248,18 @@ function getScannerState(sessionToken) {
 
 /**
  * Returns a normalized Student ID -> student record map, cached for 5 minutes.
+ * Pass forceRefresh=true on cache miss to guarantee newly added walk-in rows are seen immediately.
  */
-function getRosterMap_(ss) {
+function getRosterMap_(ss, forceRefresh) {
   const cache = CacheService.getScriptCache();
-  const cached = cache.get(ROSTER_CACHE_KEY);
-  if (cached) {
-    try {
-      return JSON.parse(cached);
-    } catch (e) {
-      // fall through to sheet read
+  if (!forceRefresh) {
+    const cached = cache.get(ROSTER_CACHE_KEY);
+    if (cached) {
+      try {
+        return JSON.parse(cached);
+      } catch (e) {
+        // fall through to sheet read
+      }
     }
   }
 
@@ -270,7 +273,7 @@ function getRosterMap_(ss) {
     for (let i = 0; i < rows.length; i++) {
       const rId = String(rows[i][0] || '').trim().toUpperCase();
       const normId = normalizeId_(rId);
-      if (!normId) continue;
+      if (!normId || map[normId]) continue; // preserve first entry on duplicate normalized ID
       map[normId] = {
         studentId: rId,
         fullName: String(rows[i][2] || '').trim(),
@@ -295,6 +298,20 @@ function invalidateRosterCache_() {
     CacheService.getScriptCache().remove(ROSTER_CACHE_KEY);
   } catch (e) {
     // ignore
+  }
+}
+
+/**
+ * Installable onEdit trigger handler: invalidates Roster cache when Roster is edited.
+ */
+function onSheetEdit(e) {
+  try {
+    const sheet = e && e.range && e.range.getSheet ? e.range.getSheet() : null;
+    if (sheet && sheet.getName() === 'Roster') {
+      invalidateRosterCache_();
+    }
+  } catch (err) {
+    // ignore trigger errors
   }
 }
 
@@ -370,7 +387,11 @@ function recordScan(sessionToken, payloadStr, stage) {
       return { status: 'REJECTED_FORGED', message: 'Forged or tampered QR token.' };
     }
 
-    const studentRecord = rosterMap[normId];
+    let studentRecord = rosterMap[normId];
+    if (!studentRecord) {
+      const freshRoster = getRosterMap_(ss, true);
+      studentRecord = freshRoster ? freshRoster[normId] : null;
+    }
     if (!studentRecord) {
       logAttempt(rawId, '', '', 'REJECTED_NOT_IN_ROSTER');
       return { status: 'REJECTED_NOT_IN_ROSTER', message: `Student ID ${rawId} not found in Roster.` };
@@ -753,8 +774,12 @@ function applyAllSystemUpgrades() {
   runStep('Sheets & Canonical Headers', () => ensureSheetsAndHeaders_(ss));
   runStep('Plain-Text ID Formatting', () => formatIdColumnsAsText_(ss));
   runStep('Backfill Missing Roster Tokens', () => backfillRosterTokens_(ss));
+  runStep('Roster Integrity Audit', () => {
+    const a = auditRosterIntegrity_(ss);
+    return `Duplicates=${a.duplicateIds.length}, InvalidEmails=${a.invalidEmails.length}, MissingNames=${a.missingNames.length}, TokenDrift=${a.tokenDrift.length}`;
+  });
   runStep('Conditional Formatting', () => applyConditionalFormatting_(ss));
-  runStep('5-Minute Auto-Rebuild Trigger', () => ensureInstallableTriggers_());
+  runStep('Installable Triggers (5-Min + onEdit)', () => ensureInstallableTriggers_());
   runStep('Rebuild Verified Attendance', () => {
     const lock = LockService.getScriptLock();
     if (!lock.tryLock(10000)) throw new Error('Lock busy');
@@ -848,6 +873,63 @@ function formatIdColumnsAsText_(ss) {
   return 'Applied @ format to ID columns';
 }
 
+/**
+ * Audits Roster for duplicate normalized IDs, invalid emails, missing names, and token drift.
+ * Distinguishes Student ID edits (TOKEN_DRIFT_ID_CHANGED) from secret rotation (TOKEN_DRIFT_SECRET_ROTATED).
+ */
+function auditRosterIntegrity_(ss) {
+  const result = { duplicateIds: [], invalidEmails: [], missingNames: [], tokenDrift: [] };
+  const rosterSheet = ss.getSheetByName('Roster');
+  if (!rosterSheet || rosterSheet.getLastRow() <= 1) return result;
+
+  const cfg = getConfig_();
+  const hasSalt = cfg.SECRET_SALT && cfg.SECRET_SALT !== PLACEHOLDER_SALT && cfg.SECRET_SALT.length >= 16;
+  const lastRow = rosterSheet.getLastRow();
+  const numCols = Math.max(6, Math.min(9, rosterSheet.getLastColumn()));
+  const rows = rosterSheet.getRange(2, 1, lastRow - 1, numCols).getValues();
+
+  const seenIds = {};
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  for (let i = 0; i < rows.length; i++) {
+    const rowNum = i + 2;
+    const rawId = String(rows[i][0] || '').trim().toUpperCase();
+    const email = String(rows[i][1] || '').trim();
+    const fullName = String(rows[i][2] || '').trim();
+    const token = String(rows[i][4] || '').trim().toUpperCase();
+    const lastSentToken = numCols >= 8 ? String(rows[i][7] || '').trim().toUpperCase() : '';
+    const lastSentId = numCols >= 9 ? String(rows[i][8] || '').trim().toUpperCase() : '';
+    const normId = normalizeId_(rawId);
+
+    if (normId) {
+      if (seenIds[normId]) {
+        result.duplicateIds.push({ row: rowNum, firstRow: seenIds[normId], studentId: rawId, normId });
+      } else {
+        seenIds[normId] = rowNum;
+      }
+    }
+
+    if (email && !emailRegex.test(email)) {
+      result.invalidEmails.push({ row: rowNum, studentId: rawId, email });
+    }
+    if (rawId && !fullName) {
+      result.missingNames.push({ row: rowNum, studentId: rawId });
+    }
+
+    if (hasSalt && rawId) {
+      const expected = createSignature_(rawId, cfg.SECRET_SALT);
+      const cmpToken = lastSentToken || token;
+      if (cmpToken && cmpToken !== expected) {
+        const reason = (lastSentId && normalizeId_(lastSentId) !== normId)
+          ? 'TOKEN_DRIFT_ID_CHANGED'
+          : 'TOKEN_DRIFT_SECRET_ROTATED';
+        result.tokenDrift.push({ row: rowNum, studentId: rawId, reason });
+      }
+    }
+  }
+  return result;
+}
+
 function backfillRosterTokens_(ss) {
   const rosterSheet = ss.getSheetByName('Roster');
   if (!rosterSheet || rosterSheet.getLastRow() <= 1) return 'No roster rows';
@@ -861,8 +943,9 @@ function backfillRosterTokens_(ss) {
   for (let i = 0; i < idsAndTokens.length; i++) {
     const studentId = String(idsAndTokens[i][0] || '').trim().toUpperCase();
     const existing = String(idsAndTokens[i][4] || '').trim();
-    if (studentId && !existing) {
-      tokenCol.push([createSignature_(studentId, cfg.SECRET_SALT)]);
+    const expected = studentId ? createSignature_(studentId, cfg.SECRET_SALT) : '';
+    if (studentId && existing !== expected) {
+      tokenCol.push([expected]);
       filled++;
     } else {
       tokenCol.push([existing]);
@@ -872,10 +955,19 @@ function backfillRosterTokens_(ss) {
     rosterSheet.getRange(2, 5, count, 1).setValues(tokenCol);
   }
   invalidateRosterCache_();
-  return `Filled ${filled} missing token(s)`;
+  return `Updated ${filled} token(s)`;
 }
 
 function applyConditionalFormatting_(ss) {
+  const replaceColRules = (sheet, colNum, newRules) => {
+    if (!sheet) return;
+    const preserved = sheet.getConditionalFormatRules().filter(rule => {
+      const ranges = rule.getRanges ? rule.getRanges() : [];
+      return !ranges.some(r => r.getColumn && r.getColumn() === colNum);
+    });
+    sheet.setConditionalFormatRules(preserved.concat(newRules));
+  };
+
   const logSheet = ss.getSheetByName('Attendance Log');
   if (logSheet) {
     const range = logSheet.getRange(2, 7, Math.max(1, logSheet.getMaxRows() - 1), 1);
@@ -884,7 +976,7 @@ function applyConditionalFormatting_(ss) {
       SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('DUPLICATE').setBackground('#fef3c7').setFontColor('#92400e').setRanges([range]).build(),
       SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('REJECTED').setBackground('#fee2e2').setFontColor('#991b1b').setRanges([range]).build()
     ];
-    logSheet.setConditionalFormatRules(rules);
+    replaceColRules(logSheet, 7, rules);
   }
 
   const verSheet = ss.getSheetByName('Verified Attendance');
@@ -894,20 +986,29 @@ function applyConditionalFormatting_(ss) {
       SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('QUALIFIED').setBackground('#d1fae5').setFontColor('#065f46').setRanges([range]).build(),
       SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('INCOMPLETE').setBackground('#fef3c7').setFontColor('#92400e').setRanges([range]).build()
     ];
-    verSheet.setConditionalFormatRules(rules);
+    replaceColRules(verSheet, 7, rules);
   }
-  return 'Updated Log & Verified Attendance rules';
+  return 'Updated Log & Verified Attendance rules (preserved custom rules)';
 }
 
 function ensureInstallableTriggers_() {
-  const existing = ScriptApp.getProjectTriggers().filter(
-    t => t.getHandlerFunction() === 'rebuildVerifiedAttendanceTrigger'
-  );
-  if (existing.length === 1) return 'Already installed';
-  existing.forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger('rebuildVerifiedAttendanceTrigger')
-    .timeBased()
-    .everyMinutes(5)
-    .create();
-  return 'Installed 5-minute trigger';
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const existing = ScriptApp.getProjectTriggers();
+  const rebuildTriggers = existing.filter(t => t.getHandlerFunction() === 'rebuildVerifiedAttendanceTrigger');
+  if (rebuildTriggers.length !== 1) {
+    rebuildTriggers.forEach(t => ScriptApp.deleteTrigger(t));
+    ScriptApp.newTrigger('rebuildVerifiedAttendanceTrigger')
+      .timeBased()
+      .everyMinutes(5)
+      .create();
+  }
+  const editTriggers = existing.filter(t => t.getHandlerFunction() === 'onSheetEdit');
+  if (editTriggers.length !== 1) {
+    editTriggers.forEach(t => ScriptApp.deleteTrigger(t));
+    ScriptApp.newTrigger('onSheetEdit')
+      .forSpreadsheet(ss)
+      .onEdit()
+      .create();
+  }
+  return '5-minute + onEdit triggers active';
 }

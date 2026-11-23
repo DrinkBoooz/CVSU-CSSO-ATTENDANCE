@@ -120,6 +120,30 @@ function run() {
     assert.strictEqual(ctx.recordScan(token, `202310001|${tok1}`, 'Check-Out').status, 'OK');
   }
 
+  // 6. Walk-in participant added after cache warm is accepted immediately via cache-miss live lookup
+  {
+    const { ctx, sheets, token, tok1, salt } = makeFixture();
+    assert.strictEqual(ctx.recordScan(token, `202310001|${tok1}`, 'Check-In').status, 'OK');
+
+    // Add walk-in directly to Roster without invalidating cache
+    const walkInId = '202699999';
+    const walkInTok = ctx.createSignature_(walkInId, salt);
+    sheets.get('Roster')._data.push([walkInId, 'walkin@cvsu.edu.ph', 'Walk In Student', 'BSCS 1-1', walkInTok, '', '']);
+
+    const walkInScan = ctx.recordScan(token, `${walkInId}|${walkInTok}`, 'Check-In');
+    assert.strictEqual(walkInScan.status, 'OK');
+    assert.strictEqual(walkInScan.fullName, 'Walk In Student');
+  }
+
+  // 7. onSheetEdit invalidates Roster cache when Roster is edited
+  {
+    const { ctx, sheets, cache, token, tok1 } = makeFixture();
+    assert.strictEqual(ctx.recordScan(token, `202310001|${tok1}`, 'Check-In').status, 'OK');
+    assert.ok(cache.get('roster_map_v1') !== null);
+    ctx.onSheetEdit({ range: { getSheet: () => sheets.get('Roster') } });
+    assert.strictEqual(cache.get('roster_map_v1'), null);
+  }
+
   console.log('PASS: record-scan.test.js');
 }
 

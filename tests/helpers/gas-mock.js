@@ -75,8 +75,25 @@ class MockRange {
   }
 
   getRow() { return this.row; }
+  getColumn() { return this.col; }
   getLastRow() { return this.row + this.numRows - 1; }
   getNumRows() { return this.numRows; }
+  getA1Notation() {
+    const colLetter = c => {
+      let s = '';
+      let n = c;
+      while (n > 0) {
+        const rem = (n - 1) % 26;
+        s = String.fromCharCode(65 + rem) + s;
+        n = Math.floor((n - 1) / 26);
+      }
+      return s;
+    };
+    const start = colLetter(this.col) + this.row;
+    if (this.numRows === 1 && this.numCols === 1) return start;
+    const end = colLetter(this.col + this.numCols - 1) + (this.row + this.numRows - 1);
+    return `${start}:${end}`;
+  }
 }
 
 class MockSheet {
@@ -256,6 +273,19 @@ function loadCode(opts = {}) {
               return {
                 create() {
                   const t = { getHandlerFunction: () => fn, everyMinutes: m };
+                  triggers.push(t);
+                  return t;
+                }
+              };
+            }
+          };
+        },
+        forSpreadsheet() {
+          return {
+            onEdit() {
+              return {
+                create() {
+                  const t = { getHandlerFunction: () => fn, eventType: 'ON_EDIT' };
                   triggers.push(t);
                   return t;
                 }
