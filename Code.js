@@ -1486,6 +1486,10 @@ function evaluateTransitionReadiness_(ss, cfg, targetId) {
     const proto = String(rows[i][12] || '').trim();
     const passEvt = String(rows[i][13] || '').trim();
 
+    const attemptNum = String(rows[i][9] === undefined || rows[i][9] === null ? '' : rows[i][9]).trim();
+    const dispatchedAt = String(rows[i][10] === undefined || rows[i][10] === null ? '' : rows[i][10]).trim();
+    const lastError = String(rows[i][11] === undefined || rows[i][11] === null ? '' : rows[i][11]).trim();
+
     if (!rawId && !email && !fullName) continue;
     eligibleCount++;
 
@@ -1498,7 +1502,20 @@ function evaluateTransitionReadiness_(ss, cfg, targetId) {
       unresolvedRecipients.push({ row: rowNum, studentId: rawId, email, status: 'DISPATCHED_UNCONFIRMED' });
     }
 
-    digestParts.push([normalizeId_(rawId), email, fullName, token, status, lastSentToken, lastSentId, proto, passEvt].join('|'));
+    digestParts.push(JSON.stringify([
+      normalizeId_(rawId),
+      email,
+      fullName,
+      token,
+      status,
+      lastSentToken,
+      lastSentId,
+      proto,
+      passEvt,
+      attemptNum,
+      dispatchedAt,
+      lastError
+    ]));
   }
 
   const invalidRecords = [...audit.invalidEmails, ...audit.missingNames];
@@ -1566,12 +1583,17 @@ function transitionToTargetEvent() {
     throw new Error('TARGET_EVENT_ID cannot be DEFAULT.');
   }
 
+  const isPending = String(props.getProperty('EVENT_TRANSITION_PENDING') || '').toUpperCase() === 'TRUE';
+  const isRetired = String(props.getProperty('V1_COMPAT_RETIRED') || '').toUpperCase() === 'TRUE';
+
+  // Post-Step-7 idempotency guard: completed transition returns deterministically without requiring TRANSITION_RECON_ACK
+  if (cfg.EVENT_ID === targetId && isRetired && !isPending) {
+    return { ok: true, alreadyCompleted: true, activeEventId: targetId, v1Retired: true };
+  }
+
   // Step 2: Fail-closed readiness & distribution acknowledgement BEFORE setting pending/retired
   // (Skip re-gating only if already past Step 4 with V1_COMPAT_RETIRED=TRUE & EVENT_TRANSITION_PENDING=TRUE)
-  const resumingPostRetirement = (
-    String(props.getProperty('EVENT_TRANSITION_PENDING') || '').toUpperCase() === 'TRUE' &&
-    String(props.getProperty('V1_COMPAT_RETIRED') || '').toUpperCase() === 'TRUE'
-  );
+  const resumingPostRetirement = isPending && isRetired;
   if (!resumingPostRetirement) {
     const report = evaluateTransitionReadiness_(ss, cfg, targetId);
     if (!report.readyToAcknowledge) {

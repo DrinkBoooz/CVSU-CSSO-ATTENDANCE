@@ -180,31 +180,54 @@ function run() {
     assert.strictEqual(report.unresolvedRecipients.length, 2); // DISPATCHED != inbox delivery
     assert.throws(() => ctx.transitionToTargetEvent(), /acknowledge/i);
 
-    // Acknowledge distribution, then mutate roster -> invalidates acknowledgement
-    ctx.acknowledgeTargetDistribution(report.digest);
-    const origSec = roster._data[1][3];
-    roster._data[1][0] = '202310001-MOD';
-    assert.throws(() => ctx.transitionToTargetEvent(), /readiness|issuance|acknowledge/i);
-    roster._data[1][0] = '202310001';
-    roster._data[1][3] = origSec;
-    ctx.acknowledgeTargetDistribution(ctx.reconcileTargetEventDistribution().digest);
+    // Acknowledge distribution, then mutate each issuance/distribution field -> invalidates acknowledgement
+    const validReport = ctx.reconcileTargetEventDistribution();
+    ctx.acknowledgeTargetDistribution(validReport.digest);
+    const ackProp = scriptProps.get('TRANSITION_RECON_ACK');
 
-    // Boundary interruption tests for Steps 3, 4, 5, 6
-    // Interrupt after Step 3 (EVENT_TRANSITION_PENDING=TRUE, before retirement) -> resume succeeds
-    scriptProps.set('EVENT_TRANSITION_PENDING', 'TRUE');
-    assert.strictEqual(ctx.getConfig_().V1_COMPAT_RETIRED, false);
+    // Unchanged roster & dispatch state retains valid acknowledgement
+    assert.strictEqual(ctx.reconcileTargetEventDistribution().digest, validReport.digest);
+    assert.strictEqual(ackProp, `CSSO-2026-ASSEMBLY|${validReport.digest}`);
 
-    // Interrupt after Step 4 (V1_COMPAT_RETIRED=TRUE, before Config.EVENT_ID updated) -> v1 rejected, resume succeeds
-    scriptProps.set('V1_COMPAT_RETIRED', 'TRUE');
-    assert.strictEqual(ctx.recordScan(sessionToken, `202310002|${v1Sig('202310002', salt)}`, 'Check-In').status, 'REJECTED_V1_RETIRED');
+    // Test invalidation on Token, Pass Status, Pass Protocol, Pass Event ID, Attempt #, Dispatched At, Last Error
+    const fieldMutations = [
+      [4, 'TAMPERED'],
+      [5, 'MAIL_API_ERROR'],
+      [12, 'v1'],
+      [13, 'OTHER-EVENT'],
+      [9, 99],
+      [10, '2026-11-23T19:00:00.000Z'],
+      [11, 'Transient error']
+    ];
+    for (const [colIdx, badVal] of fieldMutations) {
+      const orig = roster._data[1][colIdx];
+      roster._data[1][colIdx] = badVal;
+      const changed = ctx.reconcileTargetEventDistribution();
+      assert.notStrictEqual(changed.digest, validReport.digest, `Digest did not change for col ${colIdx}`);
+      assert.throws(() => ctx.transitionToTargetEvent(), /readiness|issuance|acknowledge/i);
+      roster._data[1][colIdx] = orig;
+    }
+
+    // Re-verify unchanged state still matches original acknowledgement
+    assert.strictEqual(ctx.reconcileTargetEventDistribution().digest, validReport.digest);
 
     // Interrupt after Step 5 (Config.EVENT_ID updated, EVENT_TRANSITION_PENDING still TRUE) -> resume verifies & clears pending
+    scriptProps.set('EVENT_TRANSITION_PENDING', 'TRUE');
+    scriptProps.set('V1_COMPAT_RETIRED', 'TRUE');
     sheets.get('Config')._data[4][1] = 'CSSO-2026-ASSEMBLY';
     const res = ctx.transitionToTargetEvent();
     assert.strictEqual(res.ok, true);
     assert.strictEqual(ctx.getConfig_().EVENT_ID, 'CSSO-2026-ASSEMBLY');
     assert.strictEqual(scriptProps.get('V1_COMPAT_RETIRED'), 'TRUE');
     assert.strictEqual(scriptProps.get('EVENT_TRANSITION_PENDING') || null, null);
+
+    // Step 7 idempotency: re-running transitionToTargetEvent() after completion succeeds deterministically without TRANSITION_RECON_ACK
+    assert.strictEqual(scriptProps.get('TRANSITION_RECON_ACK') || null, null);
+    const idemp = ctx.transitionToTargetEvent();
+    assert.strictEqual(idemp.ok, true);
+    assert.strictEqual(idemp.alreadyCompleted, true);
+    assert.strictEqual(idemp.activeEventId, 'CSSO-2026-ASSEMBLY');
+    assert.strictEqual(idemp.v1Retired, true);
 
     // After activation: target v2 accepted, old DEFAULT v2 & v1 rejected
     assert.strictEqual(ctx.recordScan(sessionToken, targetPayload2, 'Check-In').status, 'OK');
@@ -216,6 +239,38 @@ function run() {
     assert.strictEqual(roster._data[3][12], 'v2');
     assert.strictEqual(roster._data[3][13], 'CSSO-2026-ASSEMBLY');
     assert.strictEqual(roster._data[3][4], v2Sig('CSSO-2026-ASSEMBLY', '202699999', salt));
+
+    // Attempted reactivation by restoring Config.EVENT_ID = DEFAULT -> v1 STILL permanently rejected
+    sheets.get('Config')._data[4][1] = 'DEFAULT';
+    assert.strictEqual(ctx.recordScan(sessionToken, `202310002|${v1Sig('202310002', salt)}`, 'Mid-Event').status, 'REJECTED_V1_RETIRED');
+
+    // Isolated Step 3 boundary: EVENT_TRANSITION_PENDING=TRUE, V1_COMPAT_RETIRED unset, Config.EVENT_ID=DEFAULT
+    {
+      const env3 = makeEnv({ eventId: 'DEFAULT', scriptProperties: { V1_COMPAT_EVENT_ID: 'DEFAULT', TARGET_EVENT_ID: 'CSSO-STEP3', SECRET_SALT: salt, USHER_PIN: '619482' } });
+      env3.ctx.issueTargetEventV2Passes();
+      env3.ctx.acknowledgeTargetDistribution(env3.ctx.reconcileTargetEventDistribution().digest);
+      env3.scriptProps.set('EVENT_TRANSITION_PENDING', 'TRUE');
+      assert.strictEqual(env3.ctx.getConfig_().V1_COMPAT_RETIRED, false);
+      const r3 = env3.ctx.transitionToTargetEvent();
+      assert.strictEqual(r3.ok, true);
+      assert.strictEqual(env3.ctx.getConfig_().EVENT_ID, 'CSSO-STEP3');
+      assert.strictEqual(env3.scriptProps.get('V1_COMPAT_RETIRED'), 'TRUE');
+      assert.strictEqual(env3.scriptProps.get('EVENT_TRANSITION_PENDING') || null, null);
+    }
+
+    // Isolated Step 4 boundary: EVENT_TRANSITION_PENDING=TRUE, V1_COMPAT_RETIRED=TRUE, Config.EVENT_ID=DEFAULT
+    {
+      const env4 = makeEnv({ eventId: 'DEFAULT', scriptProperties: { V1_COMPAT_EVENT_ID: 'DEFAULT', TARGET_EVENT_ID: 'CSSO-STEP4', SECRET_SALT: salt, USHER_PIN: '619482' } });
+      env4.ctx.issueTargetEventV2Passes();
+      env4.ctx.acknowledgeTargetDistribution(env4.ctx.reconcileTargetEventDistribution().digest);
+      env4.scriptProps.set('EVENT_TRANSITION_PENDING', 'TRUE');
+      env4.scriptProps.set('V1_COMPAT_RETIRED', 'TRUE');
+      assert.strictEqual(env4.ctx.recordScan(env4.sessionToken, `202310001|${v1Sig('202310001', salt)}`, 'Check-In').status, 'REJECTED_V1_RETIRED');
+      const r4 = env4.ctx.transitionToTargetEvent();
+      assert.strictEqual(r4.ok, true);
+      assert.strictEqual(env4.ctx.getConfig_().EVENT_ID, 'CSSO-STEP4');
+      assert.strictEqual(env4.scriptProps.get('EVENT_TRANSITION_PENDING') || null, null);
+    }
 
     // Row-shift protection during target-event issuance
     {
