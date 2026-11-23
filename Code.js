@@ -2257,6 +2257,7 @@ function applyAllSystemUpgrades() {
   };
 
   runStep("Config Keys & Validation", () => ensureConfigKeys_(ss));
+  runStep("Secret Salt Initialization", () => ensureStrongSecretSalt_(ss));
   runStep("Sheets & Canonical Headers", () => ensureSheetsAndHeaders_(ss));
   runStep("Plain-Text ID Formatting", () => formatIdColumnsAsText_(ss));
   runStep("Backfill Missing Roster Tokens", () => backfillRosterTokens_(ss));
@@ -2335,6 +2336,47 @@ function ensureConfigKeys_(ss) {
   return toAdd.length
     ? `Added ${toAdd.map((r) => r[0]).join(", ")}`
     : "All keys present";
+}
+
+/**
+ * Generates a cryptographically strong 32-char hex SECRET_SALT automatically
+ * on fresh template copies when SECRET_SALT is missing or still PLACEHOLDER_SALT.
+ * Never overwrites an already-configured or ScriptProperties-migrated secret.
+ */
+function ensureStrongSecretSalt_(ss) {
+  const cfg = getConfig_();
+  if (
+    cfg.SECRET_SALT &&
+    cfg.SECRET_SALT !== PLACEHOLDER_SALT &&
+    cfg.SECRET_SALT.length >= 16
+  ) {
+    return "Existing secret preserved";
+  }
+
+  const generated = sha256HexPrefix_(
+    `${Utilities.getUuid()}|${Utilities.getUuid()}|${Date.now()}`,
+    32,
+  );
+  const sheet = ss.getSheetByName("Config");
+  if (!sheet) throw new Error("Missing Config tab.");
+
+  const rows = sheet.getLastRow() > 0 ? sheet.getDataRange().getValues() : [];
+  let updated = false;
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0] || "").trim() === "SECRET_SALT") {
+      sheet.getRange(i + 1, 2).setValue(generated);
+      updated = true;
+      break;
+    }
+  }
+  if (!updated) {
+    sheet.appendRow([
+      "SECRET_SALT",
+      generated,
+      "Auto-generated 32-char secret for QR token signing",
+    ]);
+  }
+  return "Auto-generated 32-char random SECRET_SALT";
 }
 
 function ensureSheetsAndHeaders_(ss) {
