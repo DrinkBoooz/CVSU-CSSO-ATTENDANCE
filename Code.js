@@ -1,5 +1,6 @@
 const PLACEHOLDER_SALT = "REPLACE_WITH_A_STRONG_RANDOM_SECRET_2026";
 const VALID_STAGES = ["Check-In", "Mid-Event", "Check-Out"];
+const STAGE_BITS = { "Check-In": 1, "Mid-Event": 2, "Check-Out": 4 };
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const PIN_FAIL_KEY = "pin_fail_count";
 const PIN_FAIL_WINDOW_SEC = 120; // 2 minutes
@@ -7,12 +8,13 @@ const PIN_FAIL_WARN_THRESHOLD = 15;
 const ROSTER_CACHE_KEY = "roster_map_v1";
 const ROSTER_CACHE_TTL_SEC = 300; // 5 minutes
 const DEDUPE_CACHE_TTL_SEC = 3600; // 1 hour (write-through optimization only; Attendance Log is authoritative)
+const EVENT_INDEX_CACHE_PREFIX = "evt_idx_v1_";
 const EMAIL_TIME_BUDGET_MS = 270000; // 4.5 minutes
-const APP_BUILD_VERSION = "2026.11.23-phase3";
+const APP_BUILD_VERSION = "2026.11.24-phase3-perf";
 
 /**
- * Reads key-value configuration from ScriptProperties (secrets & transition state)
- * and the Config tab (event settings, with pre-migration secret fallback).
+ * Reads key-value configuration from ScriptProperties (single batched RPC)
+ * and the Config tab (bounded A1:B25 read, with pre-migration secret fallback).
  */
 function getConfig_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -30,41 +32,36 @@ function getConfig_() {
     LOCKED_STAGE: "AUTO",
     ENFORCE_STAGE_ORDER: false,
   };
-  if (sheet && sheet.getLastRow() > 0) {
-    const rows = sheet.getDataRange().getValues();
-    rows.forEach(([k, v]) => {
-      const key = String(k || "").trim();
-      const val = String(v === undefined || v === null ? "" : v).trim();
-      if (key && key !== "Key" && val !== "") {
-        if (key === "ENFORCE_STAGE_ORDER") {
-          map[key] = val.toUpperCase() === "TRUE";
-        } else {
-          map[key] = val;
+  if (sheet) {
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 0) {
+      const rows = sheet.getRange(1, 1, Math.min(lastRow, 25), 2).getValues();
+      for (let i = 0; i < rows.length; i++) {
+        const key = String(rows[i][0] || "").trim();
+        const val = String(rows[i][1] === undefined || rows[i][1] === null ? "" : rows[i][1]).trim();
+        if (key && key !== "Key" && val !== "") {
+          if (key === "ENFORCE_STAGE_ORDER") {
+            map[key] = val.toUpperCase() === "TRUE";
+          } else {
+            map[key] = val;
+          }
         }
       }
-    });
+    }
   }
 
   try {
-    const props = PropertiesService.getScriptProperties();
-    const pPin = props.getProperty("USHER_PIN");
-    const pSalt = props.getProperty("SECRET_SALT");
-    const pLegacy = props.getProperty("LEGACY_SECRET_SALT");
-    const pCompatId = props.getProperty("V1_COMPAT_EVENT_ID");
-    const pRetired = props.getProperty("V1_COMPAT_RETIRED");
-    const pTarget = props.getProperty("TARGET_EVENT_ID");
-    const pPending = props.getProperty("EVENT_TRANSITION_PENDING");
-
-    if (pPin) map.USHER_PIN = String(pPin).trim();
-    if (pSalt) map.SECRET_SALT = String(pSalt).trim();
-    if (pLegacy) map.LEGACY_SECRET_SALT = String(pLegacy).trim();
-    if (pCompatId) map.V1_COMPAT_EVENT_ID = String(pCompatId).trim();
-    if (pRetired)
-      map.V1_COMPAT_RETIRED = String(pRetired).trim().toUpperCase() === "TRUE";
-    if (pTarget) map.TARGET_EVENT_ID = String(pTarget).trim();
-    if (pPending)
+    const allProps = PropertiesService.getScriptProperties().getProperties() || {};
+    if (allProps.USHER_PIN) map.USHER_PIN = String(allProps.USHER_PIN).trim();
+    if (allProps.SECRET_SALT) map.SECRET_SALT = String(allProps.SECRET_SALT).trim();
+    if (allProps.LEGACY_SECRET_SALT) map.LEGACY_SECRET_SALT = String(allProps.LEGACY_SECRET_SALT).trim();
+    if (allProps.V1_COMPAT_EVENT_ID) map.V1_COMPAT_EVENT_ID = String(allProps.V1_COMPAT_EVENT_ID).trim();
+    if (allProps.V1_COMPAT_RETIRED)
+      map.V1_COMPAT_RETIRED = String(allProps.V1_COMPAT_RETIRED).trim().toUpperCase() === "TRUE";
+    if (allProps.TARGET_EVENT_ID) map.TARGET_EVENT_ID = String(allProps.TARGET_EVENT_ID).trim();
+    if (allProps.EVENT_TRANSITION_PENDING)
       map.EVENT_TRANSITION_PENDING =
-        String(pPending).trim().toUpperCase() === "TRUE";
+        String(allProps.EVENT_TRANSITION_PENDING).trim().toUpperCase() === "TRUE";
   } catch (e) {
     // ignore ScriptProperties read error in constrained environments
   }
@@ -497,8 +494,13 @@ function invalidateRosterCache_() {
 function onSheetEdit(e) {
   try {
     const sheet = e && e.range && e.range.getSheet ? e.range.getSheet() : null;
-    if (sheet && sheet.getName() === "Roster") {
+    if (!sheet) return;
+    const name = sheet.getName();
+    if (name === "Roster") {
       invalidateRosterCache_();
+    } else if (name === "Attendance Log") {
+      const cfg = getConfig_();
+      invalidateEventSeenIndex_(cfg.EVENT_ID);
     }
   } catch (err) {
     // ignore trigger errors
@@ -506,10 +508,60 @@ function onSheetEdit(e) {
 }
 
 /**
- * Helper to load/save stage-dedupe cache for (EVENT_ID, normId).
- * Cache is strictly an optimization; on any miss/eviction, recordScan() falls back
- * to reading Attendance Log inside LockService.getScriptLock().
+ * Event-wide O(1) bitmask dedupe index in CacheService: { normId: bitmask }
+ * where Check-In=1, Mid-Event=2, Check-Out=4.
+ * Built once on cache miss from authoritative Attendance Log inside ScriptLock.
  */
+function eventIndexCacheKey_(eventId) {
+  return EVENT_INDEX_CACHE_PREFIX + String(eventId || "DEFAULT");
+}
+
+function getEventSeenIndex_(eventId, logSheet) {
+  const key = eventIndexCacheKey_(eventId);
+  try {
+    const raw = CacheService.getScriptCache().get(key);
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+
+  const idx = {};
+  const lastLogRow = logSheet.getLastRow();
+  if (lastLogRow > 1) {
+    const logRows = logSheet.getRange(2, 2, lastLogRow - 1, 7).getValues();
+    for (let r = 0; r < logRows.length; r++) {
+      const loggedStatus = String(logRows[r][5] || "").trim();
+      if (loggedStatus !== "ACCEPTED") continue;
+      const loggedEventId = String(logRows[r][6] || "").trim() || "DEFAULT";
+      if (loggedEventId !== eventId) continue;
+      const loggedNormId = normalizeId_(logRows[r][1]);
+      const bit = STAGE_BITS[String(logRows[r][0] || "").trim()] || 0;
+      if (loggedNormId && bit) {
+        idx[loggedNormId] = (idx[loggedNormId] || 0) | bit;
+      }
+    }
+  }
+  putEventSeenIndex_(eventId, idx);
+  return idx;
+}
+
+function putEventSeenIndex_(eventId, idx) {
+  try {
+    const serialized = JSON.stringify(idx);
+    if (serialized.length <= 90000) {
+      CacheService.getScriptCache().put(
+        eventIndexCacheKey_(eventId),
+        serialized,
+        DEDUPE_CACHE_TTL_SEC,
+      );
+    }
+  } catch (e) {}
+}
+
+function invalidateEventSeenIndex_(eventId) {
+  try {
+    CacheService.getScriptCache().remove(eventIndexCacheKey_(eventId));
+  } catch (e) {}
+}
+
 function dedupeCacheKey_(eventId, normId) {
   return `evt_seen_${eventId}_${normId}`;
 }
@@ -578,21 +630,16 @@ function recordScan(sessionToken, payloadStr, stage) {
 
     const now = new Date();
     const logAttempt = (studentId, fullName, section, status) => {
-      const nextRow = logSheet.getLastRow() + 1;
-      logSheet
-        .getRange(nextRow, 1, 1, 8)
-        .setValues([
-          [
-            now,
-            cleanStage,
-            safeCell_(studentId || ""),
-            safeCell_(fullName || ""),
-            safeCell_(section || ""),
-            safeCell_(sess.usherLabel),
-            status,
-            safeCell_(cfg.EVENT_ID),
-          ],
-        ]);
+      logSheet.appendRow([
+        now,
+        cleanStage,
+        safeCell_(studentId || ""),
+        safeCell_(fullName || ""),
+        safeCell_(section || ""),
+        safeCell_(sess.usherLabel),
+        status,
+        safeCell_(cfg.EVENT_ID),
+      ]);
     };
 
     // Enforce LOCKED_STAGE
@@ -731,31 +778,12 @@ function recordScan(sessionToken, payloadStr, stage) {
       };
     }
 
-    // Write-through dedupe cache; on miss/eviction fall back to authoritative Attendance Log
-    let seenStages = getCachedSeenStages_(cfg.EVENT_ID, normId);
-    if (!seenStages) {
-      seenStages = {};
-      const lastLogRow = logSheet.getLastRow();
-      if (lastLogRow > 1) {
-        const logRows = logSheet.getRange(2, 2, lastLogRow - 1, 7).getValues();
-        for (let r = 0; r < logRows.length; r++) {
-          const loggedStage = String(logRows[r][0] || "").trim();
-          const loggedNormId = normalizeId_(logRows[r][1]);
-          const loggedStatus = String(logRows[r][5] || "").trim();
-          const loggedEventId = String(logRows[r][6] || "").trim() || "DEFAULT";
-          if (
-            loggedStatus === "ACCEPTED" &&
-            loggedNormId === normId &&
-            loggedEventId === cfg.EVENT_ID
-          ) {
-            seenStages[loggedStage] = true;
-          }
-        }
-      }
-      putCachedSeenStages_(cfg.EVENT_ID, normId, seenStages);
-    }
+    // O(1) event-wide bitmask dedupe index; built once from Attendance Log on cache miss
+    const seenIndex = getEventSeenIndex_(cfg.EVENT_ID, logSheet);
+    const seenMask = seenIndex[normId] || 0;
+    const stageBit = STAGE_BITS[cleanStage] || 0;
 
-    if (seenStages[cleanStage]) {
+    if (seenMask & stageBit) {
       logAttempt(
         studentRecord.studentId,
         studentRecord.fullName,
@@ -772,7 +800,7 @@ function recordScan(sessionToken, payloadStr, stage) {
     }
 
     if (cfg.ENFORCE_STAGE_ORDER) {
-      if (cleanStage === "Mid-Event" && !seenStages["Check-In"]) {
+      if (cleanStage === "Mid-Event" && !(seenMask & STAGE_BITS["Check-In"])) {
         logAttempt(
           studentRecord.studentId,
           studentRecord.fullName,
@@ -786,7 +814,7 @@ function recordScan(sessionToken, payloadStr, stage) {
           message: "Must complete Check-In before Mid-Event.",
         };
       }
-      if (cleanStage === "Check-Out" && !seenStages["Mid-Event"]) {
+      if (cleanStage === "Check-Out" && !(seenMask & STAGE_BITS["Mid-Event"])) {
         logAttempt(
           studentRecord.studentId,
           studentRecord.fullName,
@@ -808,8 +836,8 @@ function recordScan(sessionToken, payloadStr, stage) {
       studentRecord.section,
       "ACCEPTED",
     );
-    seenStages[cleanStage] = true;
-    putCachedSeenStages_(cfg.EVENT_ID, normId, seenStages);
+    seenIndex[normId] = seenMask | stageBit;
+    putEventSeenIndex_(cfg.EVENT_ID, seenIndex);
 
     return {
       status: "OK",

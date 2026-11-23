@@ -179,6 +179,7 @@
   const SESSION_KEY = 'csso_session_token';
   const CAMERA_COOLDOWN_MS = 4000;
   const FETCH_TIMEOUT_MS = 15000;
+  const KEEP_WARM_INTERVAL_MS = 240000; // 4 minutes (prevents Apps Script V8 cold starts)
 
   let html5QrCode = null;
   let isProcessing = false;
@@ -188,6 +189,22 @@
   let lastCameraTime = 0;
   let acceptedCount = 0;
   let audioCtx = null;
+  let keepWarmTimer = null;
+
+  function startKeepWarm() {
+    if (keepWarmTimer) return;
+    keepWarmTimer = setInterval(() => {
+      if (!sessionToken || document.hidden || isProcessing) return;
+      apiCall({ action: 'ping' }).catch(() => {});
+    }, KEEP_WARM_INTERVAL_MS);
+  }
+
+  function stopKeepWarm() {
+    if (keepWarmTimer) {
+      clearInterval(keepWarmTimer);
+      keepWarmTimer = null;
+    }
+  }
 
   async function apiCall(body) {
     const ctrl = new AbortController();
@@ -249,6 +266,7 @@
   }
 
   function applyScannerState(res) {
+    startKeepWarm();
     document.getElementById('pinScreen').style.display = 'none';
     document.getElementById('scannerScreen').style.display = 'block';
     document.getElementById('eventTitle').textContent = res.eventTitle || 'Event Scanner';
@@ -267,6 +285,7 @@
   }
 
   function returnToPinScreen(msg) {
+    stopKeepWarm();
     stopCamera();
     sessionToken = '';
     try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
@@ -420,10 +439,10 @@
         return;
       }
       showResult(res || { status: 'ERROR', message: 'Empty server response.' });
-      setTimeout(resetReady, fromManual ? 300 : 1200);
+      setTimeout(resetReady, 300);
     } catch (err) {
       showResult({ status: 'ERROR', message: (err && err.message) || 'Network error.' });
-      setTimeout(resetReady, 1200);
+      setTimeout(resetReady, 600);
     }
   }
 
