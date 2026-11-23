@@ -367,6 +367,9 @@ function doPost(e) {
     if (action === "scanBatch") {
       return jsonOut(recordScanBatch(body.sessionToken, body.scans));
     }
+    if (action === "lookupPass") {
+      return jsonOut(lookupStudentPass(body.studentId, body.email));
+    }
     return jsonOut({
       ok: false,
       status: "ERROR",
@@ -1539,6 +1542,13 @@ function setupRegistrationFormAndTrigger() {
       .setRequired(true);
 
     form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
+    form.setConfirmationMessage(
+      `Registration received for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID})!\n\n` +
+        "View and download your signed QR Attendance Pass immediately on the Pass Portal " +
+        "(enter your Student ID and the exact email you used here):\n" +
+        "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html\n\n" +
+        "Save a screenshot of your QR pass and bring your physical School ID to the venue.",
+    );
     formId = form.getId();
     props.setProperty("REGISTRATION_FORM_ID", formId);
     createdNew = true;
@@ -1688,13 +1698,19 @@ function onRegistrationFormSubmit(e) {
     let lastSentToken = "";
     let lastSentId = "";
 
+    const autoEmailSetting = String(cfg.AUTO_EMAIL_ON_SUBMIT || "TRUE")
+      .trim()
+      .toUpperCase();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(cleanEmail)) {
+    if (autoEmailSetting === "FALSE") {
+      passStatus = "READY_ON_PORTAL";
+      lastError = "";
+    } else if (!emailRegex.test(cleanEmail)) {
       passStatus = "INVALID_EMAIL";
       lastError = "Invalid email format";
     } else if (MailApp.getRemainingDailyQuota() <= 0) {
-      passStatus = "QUOTA_EXCEEDED";
-      lastError = "Daily email quota reached";
+      passStatus = "READY_ON_PORTAL";
+      lastError = "Email quota reached; pass available on QR Portal";
     } else {
       try {
         const qrBlob = generateQrPngBlob_(payload, `Pass_${studentId}.png`);
@@ -1767,6 +1783,103 @@ function onRegistrationFormSubmit(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Self-service QR Pass Portal lookup (Way 3B — zero email quota required).
+ * Requires BOTH Student ID and registered Email to match the exact Roster row.
+ * Uses a generic error + 1.5s delay on mismatch to prevent enumeration/brute-force.
+ * Returns a server-signed QR payload and inline PNG data URI (zero secrets exposed).
+ */
+function lookupStudentPass(studentIdInput, emailInput) {
+  const cfg = getConfig_();
+  try {
+    requireSecureConfig_(cfg);
+  } catch (e) {
+    return {
+      ok: false,
+      status: "ERROR",
+      message: "System is not configured securely yet.",
+    };
+  }
+
+  const normId = normalizeId_(studentIdInput);
+  const cleanEmail = String(emailInput || "").trim().toLowerCase();
+  if (!normId || !cleanEmail) {
+    return {
+      ok: false,
+      status: "INVALID_INPUT",
+      message: "Please enter both your Student ID and registered Email.",
+    };
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const rosterSheet = ss.getSheetByName("Roster");
+  if (!rosterSheet || rosterSheet.getLastRow() <= 1) {
+    Utilities.sleep(1500);
+    return {
+      ok: false,
+      status: "NOT_FOUND",
+      message:
+        "No matching registration found. Verify your Student ID and the exact email you submitted.",
+    };
+  }
+
+  const rows = rosterSheet
+    .getRange(2, 1, rosterSheet.getLastRow() - 1, 4)
+    .getValues();
+  let matched = null;
+  for (let i = 0; i < rows.length; i++) {
+    const rId = String(rows[i][0] || "").trim().toUpperCase();
+    const rEmail = String(rows[i][1] || "").trim().toLowerCase();
+    if (normalizeId_(rId) === normId && rEmail === cleanEmail) {
+      matched = {
+        studentId: rId,
+        fullName: String(rows[i][2] || "").trim(),
+        section: String(rows[i][3] || "").trim(),
+      };
+      break;
+    }
+  }
+
+  if (!matched) {
+    Utilities.sleep(1500);
+    return {
+      ok: false,
+      status: "NOT_FOUND",
+      message:
+        "No matching registration found. Verify your Student ID and the exact email you submitted.",
+    };
+  }
+
+  const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
+  const issueProtocol =
+    !cfg.V1_COMPAT_RETIRED && cfg.EVENT_ID === compatEventId ? "v1" : "v2";
+  const issueEventId = cfg.EVENT_ID;
+
+  const token =
+    issueProtocol === "v2"
+      ? createV2Signature_(issueEventId, matched.studentId, cfg.SECRET_SALT)
+      : createSignature_(matched.studentId, cfg.SECRET_SALT);
+  const payload =
+    issueProtocol === "v2"
+      ? `v2|${issueEventId}|${matched.studentId}|${token}`
+      : `${matched.studentId}|${token}`;
+
+  const qrBlob = generateQrPngBlob_(payload, `Pass_${matched.studentId}.png`);
+  const qrBase64 = Utilities.base64Encode(qrBlob.getBytes());
+
+  return {
+    ok: true,
+    eventTitle: cfg.EVENT_TITLE,
+    eventId: issueEventId,
+    protocol: issueProtocol,
+    studentId: matched.studentId,
+    fullName: matched.fullName,
+    section: matched.section,
+    payload,
+    qrDataUri: `data:image/png;base64,${qrBase64}`,
+  };
 }
 
 /**
