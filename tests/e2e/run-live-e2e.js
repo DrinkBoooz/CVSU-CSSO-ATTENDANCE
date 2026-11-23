@@ -16,7 +16,7 @@ if (!LIVE_PIN || !TOK1 || !TOK2) {
 }
 
 function gsheets(args) {
-  return execFileSync('gsheets', args, { encoding: 'utf8', shell: true }).trim();
+  return execFileSync('gsheets', args, { encoding: 'utf8' }).trim();
 }
 
 async function api(body) {
