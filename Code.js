@@ -1499,76 +1499,78 @@ function setupRegistrationFormAndTrigger() {
     }
   }
 
+  const idValidation = FormApp.createTextValidation()
+    .setHelpText(
+      "Enter a valid Student ID (e.g. 202300328). Letters, numbers, and optional dash only — no spaces.",
+    )
+    .requireTextMatchesPattern("^[A-Za-z0-9]{4,15}(-[A-Za-z0-9]{1,8})?$")
+    .build();
+
+  const nameValidation = FormApp.createTextValidation()
+    .setHelpText(
+      "Enter your full name (3-80 characters, e.g. Dela Cruz, Juan M.). Letters, spaces, commas, periods, and hyphens only.",
+    )
+    .requireTextMatchesPattern(
+      "^[A-Za-z\\u00C0-\\u00FF][A-Za-z\\u00C0-\\u00FF .,'\\-]{2,79}$",
+    )
+    .build();
+
+  const sectionValidation = FormApp.createTextValidation()
+    .setHelpText(
+      "Enter your Course & Section (e.g. BSCS 3-1, BSCS 4-4, or BSCS-3A).",
+    )
+    .requireTextMatchesPattern(
+      "^[A-Za-z]{2,10}[\\s\\-]?[1-5][\\s\\-]?[A-Za-z0-9]{1,3}$",
+    )
+    .build();
+
   if (!form) {
     form = FormApp.create(`${cfg.EVENT_TITLE} - Student Registration`);
-    form.setDescription(
-      `Register for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID}).\n` +
-        "All fields are required. You are limited to 1 response. " +
-        "After submitting, open the QR Pass Portal link on the next screen to view and download your signed QR Attendance Pass.",
-    );
-    form.setCollectEmail(true);
-    form.setLimitOneResponsePerUser(true);
-    form.setAllowResponseEdits(false);
-    try {
-      form.setRequireLogin(true);
-    } catch (e) {
-      // setRequireLogin is Workspace-domain specific; ignore on personal accounts
-    }
-
-    const idValidation = FormApp.createTextValidation()
-      .setHelpText(
-        "Enter a valid Student ID (e.g. 202300328). Letters, numbers, and optional dash only — no spaces.",
-      )
-      .requireTextMatchesPattern("^[A-Za-z0-9]{4,15}(-[A-Za-z0-9]{1,8})?$")
-      .build();
-
-    const nameValidation = FormApp.createTextValidation()
-      .setHelpText(
-        "Enter your full name (3-80 characters, e.g. Dela Cruz, Juan M.). Letters, spaces, commas, periods, and hyphens only.",
-      )
-      .requireTextMatchesPattern("^[A-Za-z\\u00C0-\\u00FF][A-Za-z\\u00C0-\\u00FF .,'\\-]{2,79}$")
-      .build();
-
-    const sectionValidation = FormApp.createTextValidation()
-      .setHelpText(
-        "Enter your Course & Section (e.g. BSCS 3-1, BSCS 4-4, or BSCS-3A).",
-      )
-      .requireTextMatchesPattern("^[A-Za-z]{2,10}[\\s\\-]?[1-5][\\s\\-]?[A-Za-z0-9]{1,3}$")
-      .build();
-
-    form
-      .addTextItem()
-      .setTitle("Student ID")
-      .setHelpText("Example: 202300328")
-      .setRequired(true)
-      .setValidation(idValidation);
-
-    form
-      .addTextItem()
-      .setTitle("Full Name")
-      .setHelpText("Example: Dela Cruz, Juan M.")
-      .setRequired(true)
-      .setValidation(nameValidation);
-
-    form
-      .addTextItem()
-      .setTitle("Section")
-      .setHelpText("Example: BSCS 3-1")
-      .setRequired(true)
-      .setValidation(sectionValidation);
-
     form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
-    form.setConfirmationMessage(
-      `Registration received for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID})!\n\n` +
-        "View and download your signed QR Attendance Pass immediately on the Pass Portal " +
-        "(enter your Student ID and the exact email you used here):\n" +
-        "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html\n\n" +
-        "Save a screenshot of your QR pass and bring your physical School ID to the venue.",
-    );
     formId = form.getId();
     props.setProperty("REGISTRATION_FORM_ID", formId);
     createdNew = true;
   }
+
+  // Always enforce settings, confirmation message & strict field validations (on both new & existing Forms)
+  form.setTitle(`${cfg.EVENT_TITLE} - Student Registration`);
+  form.setDescription(
+    `Register for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID}).\n` +
+      "All fields are required. You are limited to 1 response. " +
+      "After submitting, open the QR Pass Portal link on the next screen to view and download your signed QR Attendance Pass.",
+  );
+  form.setCollectEmail(true);
+  form.setLimitOneResponsePerUser(true);
+  form.setAllowResponseEdits(false);
+  try {
+    form.setRequireLogin(true);
+  } catch (e) {
+    // setRequireLogin is Workspace-domain specific; ignore on personal accounts
+  }
+  form.setConfirmationMessage(
+    `Registration received for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID})!\n\n` +
+      "View and download your signed QR Attendance Pass immediately on the Pass Portal " +
+      "(enter your Student ID and the exact email you used here):\n" +
+      "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html\n\n" +
+      "Save a screenshot of your QR pass and bring your physical School ID to the venue.",
+  );
+
+  const ensureTextQuestion = (title, helpText, validation) => {
+    const existingItem = form
+      .getItems(FormApp.ItemType.TEXT)
+      .find((it) => String(it.getTitle() || "").trim() === title);
+    const textItem = existingItem
+      ? existingItem.asTextItem()
+      : form.addTextItem().setTitle(title);
+    textItem
+      .setHelpText(helpText)
+      .setRequired(true)
+      .setValidation(validation);
+  };
+
+  ensureTextQuestion("Student ID", "Example: 202300328", idValidation);
+  ensureTextQuestion("Full Name", "Example: Dela Cruz, Juan M.", nameValidation);
+  ensureTextQuestion("Section", "Example: BSCS 3-1", sectionValidation);
 
   // Install/replace the onFormSubmit trigger under the currently active user
   const existing = ScriptApp.getProjectTriggers();
