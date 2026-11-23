@@ -990,7 +990,7 @@ function getScannerSnapshot(sessionToken) {
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const rosterMap = getRosterMap_(ss, false);
+  const rosterMap = getRosterMap_(ss, true);
   if (!rosterMap) {
     return { ok: false, status: "ERROR", message: "Missing Roster sheet." };
   }
