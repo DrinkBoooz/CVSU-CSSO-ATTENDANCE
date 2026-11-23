@@ -186,6 +186,24 @@ function loadCode(opts = {}) {
     _sheets: sheets
   };
 
+  const scriptProps = new Map(Object.entries(opts.scriptProperties || {}));
+  const PropertiesService = {
+    getScriptProperties() {
+      return {
+        getProperty(k) { return scriptProps.has(k) ? scriptProps.get(k) : null; },
+        setProperty(k, v) {
+          if (opts.failPropWrite) throw new Error('ScriptProperties write failed');
+          scriptProps.set(k, String(v));
+        },
+        setProperties(obj) {
+          if (opts.failPropWrite) throw new Error('ScriptProperties write failed');
+          for (const [k, v] of Object.entries(obj)) scriptProps.set(k, String(v));
+        },
+        deleteProperty(k) { scriptProps.delete(k); },
+        getProperties() { return Object.fromEntries(scriptProps.entries()); }
+      };
+    }
+  };
   const cacheStore = new Map();
   const cache = {
     get(k) {
@@ -250,6 +268,10 @@ function loadCode(opts = {}) {
     DigestAlgorithm: { SHA_256: 'SHA_256', SHA256: 'SHA_256' },
     computeDigest(_alg, input) {
       const buf = crypto.createHash('sha256').update(String(input), 'utf8').digest();
+      return Array.from(buf, b => (b > 127 ? b - 256 : b));
+    },
+    computeHmacSha256Signature(value, key) {
+      const buf = crypto.createHmac('sha256', String(key)).update(String(value), 'utf8').digest();
       return Array.from(buf, b => (b > 127 ? b - 256 : b));
     },
     base64EncodeWebSafe(str) {
@@ -381,6 +403,7 @@ function loadCode(opts = {}) {
     Utilities,
     LockService: { getScriptLock: () => lock },
     CacheService: { getScriptCache: () => cache },
+    PropertiesService,
     Session: { getScriptTimeZone: () => 'Asia/Singapore' },
     MailApp,
     GmailApp,
@@ -416,6 +439,7 @@ function loadCode(opts = {}) {
     ss,
     sheets,
     cache,
+    scriptProps,
     lock,
     sentEmails,
     gmailSentEmails,

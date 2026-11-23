@@ -3,13 +3,16 @@ const VALID_STAGES = ['Check-In', 'Mid-Event', 'Check-Out'];
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const PIN_FAIL_KEY = 'pin_fail_count';
 const PIN_FAIL_WINDOW_SEC = 120; // 2 minutes
-const PIN_FAIL_MAX = 15;
+const PIN_FAIL_WARN_THRESHOLD = 15;
 const ROSTER_CACHE_KEY = 'roster_map_v1';
 const ROSTER_CACHE_TTL_SEC = 300; // 5 minutes
+const DEDUPE_CACHE_TTL_SEC = 3600; // 1 hour (write-through optimization only; Attendance Log is authoritative)
 const EMAIL_TIME_BUDGET_MS = 270000; // 4.5 minutes
+const APP_BUILD_VERSION = '2026.11.23-phase3';
 
 /**
- * Reads key-value configuration from the Config tab.
+ * Reads key-value configuration from ScriptProperties (secrets & transition state)
+ * and the Config tab (event settings, with pre-migration secret fallback).
  */
 function getConfig_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -17,6 +20,11 @@ function getConfig_() {
   const map = {
     USHER_PIN: '',
     SECRET_SALT: '',
+    LEGACY_SECRET_SALT: '',
+    V1_COMPAT_EVENT_ID: '',
+    V1_COMPAT_RETIRED: false,
+    TARGET_EVENT_ID: '',
+    EVENT_TRANSITION_PENDING: false,
     EVENT_TITLE: 'Event QR Attendance Scanner',
     EVENT_ID: 'DEFAULT',
     LOCKED_STAGE: 'AUTO',
@@ -35,6 +43,27 @@ function getConfig_() {
         }
       }
     });
+  }
+
+  try {
+    const props = PropertiesService.getScriptProperties();
+    const pPin = props.getProperty('USHER_PIN');
+    const pSalt = props.getProperty('SECRET_SALT');
+    const pLegacy = props.getProperty('LEGACY_SECRET_SALT');
+    const pCompatId = props.getProperty('V1_COMPAT_EVENT_ID');
+    const pRetired = props.getProperty('V1_COMPAT_RETIRED');
+    const pTarget = props.getProperty('TARGET_EVENT_ID');
+    const pPending = props.getProperty('EVENT_TRANSITION_PENDING');
+
+    if (pPin) map.USHER_PIN = String(pPin).trim();
+    if (pSalt) map.SECRET_SALT = String(pSalt).trim();
+    if (pLegacy) map.LEGACY_SECRET_SALT = String(pLegacy).trim();
+    if (pCompatId) map.V1_COMPAT_EVENT_ID = String(pCompatId).trim();
+    if (pRetired) map.V1_COMPAT_RETIRED = String(pRetired).trim().toUpperCase() === 'TRUE';
+    if (pTarget) map.TARGET_EVENT_ID = String(pTarget).trim();
+    if (pPending) map.EVENT_TRANSITION_PENDING = String(pPending).trim().toUpperCase() === 'TRUE';
+  } catch (e) {
+    // ignore ScriptProperties read error in constrained environments
   }
   return map;
 }
@@ -88,8 +117,70 @@ function sha256HexPrefix_(input, length) {
     .toUpperCase();
 }
 
+function hmacSha256Hex_(msg, key, length) {
+  const raw = Utilities.computeHmacSha256Signature(String(msg), String(key));
+  const hex = raw
+    .map(b => ('0' + (b & 0xff).toString(16)).slice(-2))
+    .join('')
+    .toUpperCase();
+  return length ? hex.substring(0, length) : hex;
+}
+
+function constantTimeEqual_(a, b) {
+  const s1 = String(a || '');
+  const s2 = String(b || '');
+  if (s1.length !== s2.length) return false;
+  let diff = 0;
+  for (let i = 0; i < s1.length; i++) {
+    diff |= s1.charCodeAt(i) ^ s2.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+/**
+ * Legacy v1 signature: exact original SHA256(STUDENT_ID + "|" + SECRET_SALT)[0:10].
+ * Never replaced with HMAC-SHA256.
+ */
 function createSignature_(studentId, salt) {
   return sha256HexPrefix_(`${String(studentId).trim().toUpperCase()}|${salt}`, 10);
+}
+
+function verifyLegacyV1Signature_(rawId, scannedToken, cfg) {
+  const expectedCurrent = createSignature_(rawId, cfg.SECRET_SALT);
+  if (constantTimeEqual_(scannedToken, expectedCurrent)) return true;
+  if (cfg.LEGACY_SECRET_SALT) {
+    const expectedLegacy = createSignature_(rawId, cfg.LEGACY_SECRET_SALT);
+    if (constantTimeEqual_(scannedToken, expectedLegacy)) return true;
+  }
+  return false;
+}
+
+function validateV2Field_(val, label) {
+  const s = String(val === undefined || val === null ? '' : val);
+  if (!s) throw new Error(`${label} cannot be empty.`);
+  if (s.includes('|')) throw new Error(`${label} cannot contain the "|" delimiter.`);
+  if (s !== s.trim() || /[\x00-\x1f\x7f]/.test(s)) {
+    throw new Error(`${label} cannot contain leading/trailing whitespace or control characters.`);
+  }
+  return s;
+}
+
+function createV2Signature_(eventId, studentId, key) {
+  const ev = validateV2Field_(eventId, 'EVENT_ID');
+  const sid = validateV2Field_(studentId, 'STUDENT_ID');
+  return hmacSha256Hex_(`v2|${ev}|${sid}`, key, 64);
+}
+
+function verifyV2Signature_(eventId, studentId, scannedHmac, cfg) {
+  if (!/^[A-F0-9]{32,64}$/.test(scannedHmac)) return false;
+  const prefix = `v2|${eventId}|${studentId}`;
+  const expectedCur = hmacSha256Hex_(prefix, cfg.SECRET_SALT, scannedHmac.length);
+  if (constantTimeEqual_(scannedHmac, expectedCur)) return true;
+  if (cfg.LEGACY_SECRET_SALT) {
+    const expectedLeg = hmacSha256Hex_(prefix, cfg.LEGACY_SECRET_SALT, scannedHmac.length);
+    if (constantTimeEqual_(scannedHmac, expectedLeg)) return true;
+  }
+  return false;
 }
 
 function normalizeId_(id) {
@@ -97,19 +188,19 @@ function normalizeId_(id) {
 }
 
 /**
- * Creates a stateless HMAC-style signed session token tied to SECRET_SALT and USHER_PIN.
- * Rotating USHER_PIN in Config immediately invalidates all previously issued tokens.
+ * Creates a stateless HMAC-SHA256 signed session token tied to SECRET_SALT and USHER_PIN.
+ * Rotating USHER_PIN immediately invalidates all previously issued tokens.
  */
 function createSessionToken_(usherLabel, cfg) {
   const cleanUsher = String(usherLabel || 'Usher').replace(/\|/g, ' ').trim().substring(0, 40) || 'Usher';
   const expMs = Date.now() + SESSION_TTL_MS;
   const payloadB64 = Utilities.base64EncodeWebSafe(`${cleanUsher}|${expMs}`);
-  const sig = sha256HexPrefix_(`${payloadB64}|${cfg.SECRET_SALT}|${cfg.USHER_PIN}`, 16);
+  const sig = hmacSha256Hex_(payloadB64, `${cfg.SECRET_SALT}|${cfg.USHER_PIN}`, 32);
   return { token: `${payloadB64}.${sig}`, usherLabel: cleanUsher, expMs };
 }
 
 /**
- * Verifies a signed session token against current Config.
+ * Verifies a signed HMAC-SHA256 session token against current Config.
  */
 function verifySessionToken_(sessionToken, cfg) {
   try {
@@ -122,8 +213,8 @@ function verifySessionToken_(sessionToken, cfg) {
   const [payloadB64, sig] = parts;
   if (!payloadB64 || !sig) return { ok: false };
 
-  const expectedSig = sha256HexPrefix_(`${payloadB64}|${cfg.SECRET_SALT}|${cfg.USHER_PIN}`, 16);
-  if (sig !== expectedSig) return { ok: false };
+  const expectedSig = hmacSha256Hex_(payloadB64, `${cfg.SECRET_SALT}|${cfg.USHER_PIN}`, 32);
+  if (!constantTimeEqual_(sig, expectedSig)) return { ok: false };
 
   let decoded = '';
   try {
@@ -169,15 +260,25 @@ function doGet() {
  * Accepts text/plain JSON payloads to avoid CORS preflight requests.
  */
 function doPost(e) {
+  const requestId = Utilities.getUuid().substring(0, 8);
   const jsonOut = obj => ContentService
-    .createTextOutput(JSON.stringify(obj))
+    .createTextOutput(JSON.stringify(Object.assign({ requestId }, obj)))
     .setMimeType(ContentService.MimeType.JSON);
 
+  let body;
   try {
     const raw = e && e.postData && e.postData.contents ? e.postData.contents : '';
-    const body = JSON.parse(raw);
-    const action = String(body.action || '').trim();
+    body = JSON.parse(raw);
+  } catch (parseErr) {
+    return jsonOut({ ok: false, status: 'INVALID_JSON', message: 'Invalid JSON request payload.' });
+  }
 
+  try {
+    const action = String(body && body.action ? body.action : '').trim();
+    if (action === 'ping') {
+      const cfg = getConfig_();
+      return jsonOut({ ok: true, status: 'OK', version: APP_BUILD_VERSION, eventId: cfg.EVENT_ID });
+    }
     if (action === 'login') {
       return jsonOut(verifyUsherPin(body.pin, body.usherName));
     }
@@ -189,12 +290,15 @@ function doPost(e) {
     }
     return jsonOut({ ok: false, status: 'ERROR', message: 'Unknown API action.' });
   } catch (err) {
-    return jsonOut({ ok: false, status: 'ERROR', message: 'Invalid request payload.' });
+    console.error(`doPost [${requestId}] internal error:`, err && err.stack ? err.stack : err);
+    return jsonOut({ ok: false, status: 'INTERNAL_ERROR', message: `Internal server error (ref: ${requestId}).` });
   }
 }
 
 /**
- * Authenticates an usher PIN and returns a signed 6-hour session token.
+ * Authenticates an usher PIN and returns a signed 6-hour HMAC-SHA256 session token.
+ * Note: Anonymous GAS endpoints cannot inspect caller IP; uses bounded per-failure delay
+ * rather than a global gate DoS lockout.
  */
 function verifyUsherPin(pinInput, usherName) {
   const cfg = getConfig_();
@@ -204,14 +308,8 @@ function verifyUsherPin(pinInput, usherName) {
     return { ok: false, message: 'Scanner is not configured securely: ' + e.message };
   }
 
-  const cache = CacheService.getScriptCache();
-  const failCount = Number(cache.get(PIN_FAIL_KEY) || '0');
-  if (failCount >= PIN_FAIL_MAX) {
-    return { ok: false, message: 'Too many failed PIN attempts. Wait 2 minutes and try again.' };
-  }
-
   const cleanPin = String(pinInput || '').trim();
-  if (cleanPin && cleanPin === cfg.USHER_PIN) {
+  if (cleanPin && constantTimeEqual_(cleanPin, cfg.USHER_PIN)) {
     const sess = createSessionToken_(usherName, cfg);
     return {
       ok: true,
@@ -223,7 +321,12 @@ function verifyUsherPin(pinInput, usherName) {
     };
   }
 
-  cache.put(PIN_FAIL_KEY, String(failCount + 1), PIN_FAIL_WINDOW_SEC);
+  const cache = CacheService.getScriptCache();
+  const failCount = Number(cache.get(PIN_FAIL_KEY) || '0') + 1;
+  cache.put(PIN_FAIL_KEY, String(failCount), PIN_FAIL_WINDOW_SEC);
+  if (failCount >= PIN_FAIL_WARN_THRESHOLD) {
+    console.warn(`High failed PIN attempt volume (${failCount} in ${PIN_FAIL_WINDOW_SEC}s window).`);
+  }
   Utilities.sleep(1500);
   return { ok: false, message: 'Incorrect Usher PIN.' };
 }
@@ -316,9 +419,37 @@ function onSheetEdit(e) {
 }
 
 /**
+ * Helper to load/save stage-dedupe cache for (EVENT_ID, normId).
+ * Cache is strictly an optimization; on any miss/eviction, recordScan() falls back
+ * to reading Attendance Log inside LockService.getScriptLock().
+ */
+function dedupeCacheKey_(eventId, normId) {
+  return `evt_seen_${eventId}_${normId}`;
+}
+
+function getCachedSeenStages_(eventId, normId) {
+  try {
+    const raw = CacheService.getScriptCache().get(dedupeCacheKey_(eventId, normId));
+    if (raw) return JSON.parse(raw);
+  } catch (e) {}
+  return null;
+}
+
+function putCachedSeenStages_(eventId, normId, seenStages) {
+  try {
+    CacheService.getScriptCache().put(
+      dedupeCacheKey_(eventId, normId),
+      JSON.stringify(seenStages),
+      DEDUPE_CACHE_TTL_SEC
+    );
+  } catch (e) {}
+}
+
+/**
  * Called by the Web App on every QR or manual pass scan.
- * Enforces server-side session token, LOCKED_STAGE, signature, Roster membership,
- * EVENT_ID duplicate prevention, and optional stage ordering.
+ * Enforces server-side session token, LOCKED_STAGE, v1/v2 signature & event binding,
+ * Roster membership, EVENT_ID duplicate prevention (authoritative Attendance Log
+ * inside LockService), and optional stage ordering.
  */
 function recordScan(sessionToken, payloadStr, stage) {
   const cfg = getConfig_();
@@ -332,17 +463,22 @@ function recordScan(sessionToken, payloadStr, stage) {
     return { status: 'ERROR', message: 'Invalid checkpoint stage selected.' };
   }
 
+  // Pre-load cached Roster outside LockService to minimize lock hold time
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let rosterMap = getRosterMap_(ss, false);
+  if (!rosterMap) {
+    return { status: 'ERROR', message: 'Missing Roster sheet.' };
+  }
+
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) {
     return { status: 'ERROR', message: 'Scanner busy. Scan again in 1 second.' };
   }
 
   try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
     const logSheet = ss.getSheetByName('Attendance Log');
-    const rosterMap = getRosterMap_(ss);
-    if (!rosterMap || !logSheet) {
-      return { status: 'ERROR', message: 'Missing Roster or Attendance Log sheet.' };
+    if (!logSheet) {
+      return { status: 'ERROR', message: 'Missing Attendance Log sheet.' };
     }
 
     const now = new Date();
@@ -370,47 +506,98 @@ function recordScan(sessionToken, payloadStr, stage) {
       };
     }
 
-    // Parse ID|TOKEN payload
-    const parts = String(payloadStr || '').trim().split('|');
-    if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
-      logAttempt(String(payloadStr || '').trim().substring(0, 40), '', '', 'REJECTED_MALFORMED');
-      return { status: 'REJECTED_MALFORMED', message: 'Malformed QR payload.' };
-    }
+    const rawPayload = String(payloadStr || '');
+    const parts = rawPayload.split('|');
 
-    const rawId = parts[0].trim().toUpperCase();
-    const scannedToken = parts[1].trim().toUpperCase();
-    const normId = normalizeId_(rawId);
+    let rawId = '';
+    let normId = '';
 
-    const expectedToken = createSignature_(rawId, cfg.SECRET_SALT);
-    if (scannedToken !== expectedToken) {
-      logAttempt(rawId, '', '', 'REJECTED_FORGED');
-      return { status: 'REJECTED_FORGED', message: 'Forged or tampered QR token.' };
+    if (parts[0] === 'v2') {
+      // Canonical v2|EVENT_ID|STUDENT_ID|HMAC — strict 4 segments, no silent field modification
+      if (parts.length !== 4) {
+        logAttempt(rawPayload.trim().substring(0, 40), '', '', 'REJECTED_MALFORMED');
+        return { status: 'REJECTED_MALFORMED', message: 'Malformed v2 QR payload.' };
+      }
+      const [, evId, sid, hmac] = parts;
+      try {
+        validateV2Field_(evId, 'EVENT_ID');
+        validateV2Field_(sid, 'STUDENT_ID');
+      } catch (fieldErr) {
+        logAttempt(rawPayload.trim().substring(0, 40), '', '', 'REJECTED_MALFORMED');
+        return { status: 'REJECTED_MALFORMED', message: fieldErr.message };
+      }
+      if (!hmac || hmac !== hmac.trim()) {
+        logAttempt(sid, '', '', 'REJECTED_MALFORMED');
+        return { status: 'REJECTED_MALFORMED', message: 'Malformed v2 HMAC.' };
+      }
+
+      rawId = sid;
+      normId = normalizeId_(rawId);
+
+      // Strict EVENT_ID validation before accepting either SECRET_SALT or LEGACY_SECRET_SALT
+      if (evId !== cfg.EVENT_ID) {
+        logAttempt(rawId, '', '', 'REJECTED_WRONG_EVENT');
+        return { status: 'REJECTED_WRONG_EVENT', message: `Pass belongs to event "${evId}", not "${cfg.EVENT_ID}".` };
+      }
+
+      if (!verifyV2Signature_(evId, sid, hmac, cfg)) {
+        logAttempt(rawId, '', '', 'REJECTED_FORGED');
+        return { status: 'REJECTED_FORGED', message: 'Forged or tampered v2 QR token.' };
+      }
+    } else {
+      // Legacy v1: STUDENTID|10-HEX
+      if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+        logAttempt(rawPayload.trim().substring(0, 40), '', '', 'REJECTED_MALFORMED');
+        return { status: 'REJECTED_MALFORMED', message: 'Malformed QR payload.' };
+      }
+
+      rawId = parts[0].trim().toUpperCase();
+      const scannedToken = parts[1].trim().toUpperCase();
+      normId = normalizeId_(rawId);
+
+      if (cfg.V1_COMPAT_RETIRED) {
+        logAttempt(rawId, '', '', 'REJECTED_V1_RETIRED');
+        return { status: 'REJECTED_V1_RETIRED', message: 'Legacy v1 passes have been permanently retired.' };
+      }
+      const compatEventId = cfg.V1_COMPAT_EVENT_ID || 'DEFAULT';
+      if (cfg.EVENT_ID !== compatEventId) {
+        logAttempt(rawId, '', '', 'REJECTED_WRONG_EVENT');
+        return { status: 'REJECTED_WRONG_EVENT', message: `Legacy v1 passes are only valid for ${compatEventId}.` };
+      }
+      if (!verifyLegacyV1Signature_(rawId, scannedToken, cfg)) {
+        logAttempt(rawId, '', '', 'REJECTED_FORGED');
+        return { status: 'REJECTED_FORGED', message: 'Forged or tampered QR token.' };
+      }
     }
 
     let studentRecord = rosterMap[normId];
     if (!studentRecord) {
-      const freshRoster = getRosterMap_(ss, true);
-      studentRecord = freshRoster ? freshRoster[normId] : null;
+      rosterMap = getRosterMap_(ss, true);
+      studentRecord = rosterMap ? rosterMap[normId] : null;
     }
     if (!studentRecord) {
       logAttempt(rawId, '', '', 'REJECTED_NOT_IN_ROSTER');
       return { status: 'REJECTED_NOT_IN_ROSTER', message: `Student ID ${rawId} not found in Roster.` };
     }
 
-    // Scan Attendance Log (cols B..H) for active EVENT_ID
-    const lastLogRow = logSheet.getLastRow();
-    const seenStages = {};
-    if (lastLogRow > 1) {
-      const logRows = logSheet.getRange(2, 2, lastLogRow - 1, 7).getValues();
-      for (let r = 0; r < logRows.length; r++) {
-        const loggedStage = String(logRows[r][0] || '').trim();
-        const loggedNormId = normalizeId_(logRows[r][1]);
-        const loggedStatus = String(logRows[r][5] || '').trim();
-        const loggedEventId = String(logRows[r][6] || '').trim() || 'DEFAULT';
-        if (loggedStatus === 'ACCEPTED' && loggedNormId === normId && loggedEventId === cfg.EVENT_ID) {
-          seenStages[loggedStage] = true;
+    // Write-through dedupe cache; on miss/eviction fall back to authoritative Attendance Log
+    let seenStages = getCachedSeenStages_(cfg.EVENT_ID, normId);
+    if (!seenStages) {
+      seenStages = {};
+      const lastLogRow = logSheet.getLastRow();
+      if (lastLogRow > 1) {
+        const logRows = logSheet.getRange(2, 2, lastLogRow - 1, 7).getValues();
+        for (let r = 0; r < logRows.length; r++) {
+          const loggedStage = String(logRows[r][0] || '').trim();
+          const loggedNormId = normalizeId_(logRows[r][1]);
+          const loggedStatus = String(logRows[r][5] || '').trim();
+          const loggedEventId = String(logRows[r][6] || '').trim() || 'DEFAULT';
+          if (loggedStatus === 'ACCEPTED' && loggedNormId === normId && loggedEventId === cfg.EVENT_ID) {
+            seenStages[loggedStage] = true;
+          }
         }
       }
+      putCachedSeenStages_(cfg.EVENT_ID, normId, seenStages);
     }
 
     if (seenStages[cleanStage]) {
@@ -446,6 +633,8 @@ function recordScan(sessionToken, payloadStr, stage) {
     }
 
     logAttempt(studentRecord.studentId, studentRecord.fullName, studentRecord.section, 'ACCEPTED');
+    seenStages[cleanStage] = true;
+    putCachedSeenStages_(cfg.EVENT_ID, normId, seenStages);
 
     return {
       status: 'OK',
@@ -1073,4 +1262,176 @@ function ensureInstallableTriggers_() {
       .create();
   }
   return '5-minute + onEdit triggers active';
+}
+
+/**
+ * Migrates USHER_PIN and SECRET_SALT from Config into ScriptProperties,
+ * read-back verifies both values, initializes V1_COMPAT_EVENT_ID once,
+ * and only then clears the plaintext Config cells.
+ */
+function migrateSecretsToProperties() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const cfg = getConfig_();
+  requireSecureConfig_(cfg);
+
+  const props = PropertiesService.getScriptProperties();
+  const toStore = {
+    USHER_PIN: cfg.USHER_PIN,
+    SECRET_SALT: cfg.SECRET_SALT
+  };
+  if (!props.getProperty('V1_COMPAT_EVENT_ID')) {
+    toStore.V1_COMPAT_EVENT_ID = cfg.EVENT_ID || 'DEFAULT';
+  }
+  props.setProperties(toStore);
+
+  // Read-back verification before clearing plaintext Config cells
+  if (props.getProperty('USHER_PIN') !== cfg.USHER_PIN || props.getProperty('SECRET_SALT') !== cfg.SECRET_SALT) {
+    throw new Error('ScriptProperties read-back verification failed; Config left untouched.');
+  }
+
+  const configSheet = ss.getSheetByName('Config');
+  if (configSheet && configSheet.getLastRow() > 1) {
+    const rows = configSheet.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      const k = String(rows[i][0] || '').trim();
+      if (k === 'USHER_PIN' || k === 'SECRET_SALT') {
+        configSheet.getRange(i + 1, 2).setValue('');
+      }
+    }
+  }
+  return { ok: true, compatEventId: props.getProperty('V1_COMPAT_EVENT_ID') };
+}
+
+/**
+ * Authorized rollback helper: restores USHER_PIN and SECRET_SALT from ScriptProperties
+ * back into Config before redeploying an older Config-only version.
+ */
+function restoreSecretsToConfigFromProperties() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const props = PropertiesService.getScriptProperties();
+  const pin = props.getProperty('USHER_PIN');
+  const salt = props.getProperty('SECRET_SALT');
+  if (!pin || !salt) {
+    throw new Error('Missing USHER_PIN or SECRET_SALT in ScriptProperties.');
+  }
+  const configSheet = ss.getSheetByName('Config');
+  if (!configSheet) throw new Error('Missing Config tab.');
+
+  const rows = configSheet.getDataRange().getValues();
+  let wrotePin = false;
+  let wroteSalt = false;
+  for (let i = 1; i < rows.length; i++) {
+    const k = String(rows[i][0] || '').trim();
+    if (k === 'USHER_PIN') {
+      configSheet.getRange(i + 1, 2).setValue(pin);
+      wrotePin = true;
+    } else if (k === 'SECRET_SALT') {
+      configSheet.getRange(i + 1, 2).setValue(salt);
+      wroteSalt = true;
+    }
+  }
+  if (!wrotePin || !wroteSalt) {
+    throw new Error('Could not find USHER_PIN and SECRET_SALT rows in Config.');
+  }
+  return { ok: true };
+}
+
+/**
+ * Rotates SECRET_SALT while preserving the prior key in LEGACY_SECRET_SALT.
+ * Refuses to execute if LEGACY_SECRET_SALT is already populated.
+ */
+function rotateSecretSalt(newSalt) {
+  const cleanNew = String(newSalt || '').trim();
+  if (!cleanNew || cleanNew === PLACEHOLDER_SALT || cleanNew.length < 16) {
+    throw new Error('New SECRET_SALT must be at least 16 non-placeholder characters.');
+  }
+  const cfg = getConfig_();
+  requireSecureConfig_(cfg);
+
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('LEGACY_SECRET_SALT')) {
+    throw new Error('LEGACY_SECRET_SALT is still active. Run retireLegacySecretSalt() after reissuing passes before rotating again.');
+  }
+
+  props.setProperties({
+    LEGACY_SECRET_SALT: cfg.SECRET_SALT,
+    SECRET_SALT: cleanNew
+  });
+  return { ok: true };
+}
+
+function retireLegacySecretSalt() {
+  PropertiesService.getScriptProperties().deleteProperty('LEGACY_SECRET_SALT');
+  return { ok: true };
+}
+
+/**
+ * Persists TARGET_EVENT_ID in ScriptProperties for pre-transition v2 issuance
+ * without changing active Config.EVENT_ID.
+ */
+function setTargetEventId(targetEventId) {
+  const cleanTarget = validateV2Field_(targetEventId, 'TARGET_EVENT_ID');
+  if (cleanTarget === 'DEFAULT') {
+    throw new Error('TARGET_EVENT_ID cannot be DEFAULT (reserved exclusively for legacy v1 compatibility).');
+  }
+  const cfg = getConfig_();
+  if (cleanTarget === cfg.EVENT_ID) {
+    throw new Error('TARGET_EVENT_ID must differ from the active Config.EVENT_ID.');
+  }
+  PropertiesService.getScriptProperties().setProperty('TARGET_EVENT_ID', cleanTarget);
+  return { ok: true, targetEventId: cleanTarget };
+}
+
+/**
+ * Resumable 7-step transition from active event (e.g., DEFAULT) to TARGET_EVENT_ID:
+ * 1) Validate TARGET_EVENT_ID, 2) Verify readiness, 3) Persist EVENT_TRANSITION_PENDING,
+ * 4) Persist V1_COMPAT_RETIRED = TRUE (irreversible), 5) Set Config.EVENT_ID = TARGET_EVENT_ID,
+ * 6) Verify v2 acceptance & old-event rejection, 7) Clear EVENT_TRANSITION_PENDING.
+ */
+function transitionToTargetEvent() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const props = PropertiesService.getScriptProperties();
+  const cfg = getConfig_();
+  requireSecureConfig_(cfg);
+
+  const targetId = validateV2Field_(props.getProperty('TARGET_EVENT_ID') || '', 'TARGET_EVENT_ID');
+  if (targetId === 'DEFAULT') {
+    throw new Error('TARGET_EVENT_ID cannot be DEFAULT.');
+  }
+
+  // Step 3: Persist pending state
+  props.setProperty('EVENT_TRANSITION_PENDING', 'TRUE');
+
+  // Step 4: Irreversibly retire v1 compatibility
+  props.setProperty('V1_COMPAT_RETIRED', 'TRUE');
+
+  // Step 5: Activate target by updating Config.EVENT_ID
+  const configSheet = ss.getSheetByName('Config');
+  if (!configSheet) throw new Error('Missing Config tab.');
+  const rows = configSheet.getDataRange().getValues();
+  let updated = false;
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0] || '').trim() === 'EVENT_ID') {
+      configSheet.getRange(i + 1, 2).setValue(targetId);
+      updated = true;
+      break;
+    }
+  }
+  if (!updated) {
+    configSheet.getRange(configSheet.getLastRow() + 1, 1, 1, 3).setValues([['EVENT_ID', targetId, 'Active event ID']]);
+  }
+
+  // Step 6: Self-verify target v2 signature acceptance & v1 rejection
+  const afterCfg = getConfig_();
+  if (afterCfg.EVENT_ID !== targetId || !afterCfg.V1_COMPAT_RETIRED) {
+    throw new Error('Transition verification failed; EVENT_TRANSITION_PENDING retained.');
+  }
+  const probeSig = createV2Signature_(targetId, 'PROBE001', afterCfg.SECRET_SALT);
+  if (!verifyV2Signature_(targetId, 'PROBE001', probeSig, afterCfg)) {
+    throw new Error('Target v2 self-verification failed; EVENT_TRANSITION_PENDING retained.');
+  }
+
+  // Step 7: Clear pending state only after successful verification
+  props.deleteProperty('EVENT_TRANSITION_PENDING');
+  return { ok: true, activeEventId: targetId, v1Retired: true };
 }

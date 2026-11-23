@@ -12,7 +12,7 @@ function makeFixture(extraConfig = []) {
         ['USHER_PIN', '619482'],
         ['SECRET_SALT', salt],
         ['EVENT_TITLE', 'CSSO Day'],
-        ['EVENT_ID', 'EVT-01'],
+        ['EVENT_ID', 'DEFAULT'],
         ['LOCKED_STAGE', 'AUTO'],
         ['ENFORCE_STAGE_ORDER', 'FALSE'],
         ...extraConfig
@@ -48,10 +48,10 @@ function run() {
 
   // 2. Valid scan writes 1 row with Event ID, sanitizes usher label, and does NOT rewrite Verified Attendance
   {
-    const { ctx, sheets, token, tok1 } = makeFixture();
+    const { ctx, sheets, token, tok1, salt } = makeFixture();
     const res = ctx.recordScan(token, `202310001|${tok1}`, 'Check-In');
     assert.strictEqual(res.status, 'OK');
-    assert.strictEqual(res.eventId, 'EVT-01');
+    assert.strictEqual(res.eventId, 'DEFAULT');
 
     const log = sheets.get('Attendance Log');
     assert.strictEqual(log.getLastRow(), 2);
@@ -60,7 +60,7 @@ function run() {
     assert.strictEqual(row[2], '202310001');
     assert.strictEqual(row[5], "'=Gate A"); // formula injection neutralized
     assert.strictEqual(row[6], 'ACCEPTED');
-    assert.strictEqual(row[7], 'EVT-01');
+    assert.strictEqual(row[7], 'DEFAULT');
 
     // Verified Attendance was NOT touched on scan hot path
     const ver = sheets.get('Verified Attendance');
@@ -73,9 +73,10 @@ function run() {
     assert.strictEqual(log.getLastRow(), 3);
     assert.strictEqual(log._data[2][6], 'DUPLICATE');
 
-    // Switch EVENT_ID -> same student & stage is ACCEPTED (not duplicate)
+    // Switch EVENT_ID -> v2 pass for EVT-02 is ACCEPTED (not duplicate), while v1 is rejected
     sheets.get('Config')._data[4][1] = 'EVT-02';
-    const nextEvt = ctx.recordScan(token, `202310001|${tok1}`, 'Check-In');
+    const v2Evt2 = `v2|EVT-02|202310001|${ctx.createV2Signature_('EVT-02', '202310001', salt)}`;
+    const nextEvt = ctx.recordScan(token, v2Evt2, 'Check-In');
     assert.strictEqual(nextEvt.status, 'OK');
     assert.strictEqual(log._data[3][7], 'EVT-02');
   }
@@ -102,7 +103,7 @@ function run() {
 
   // 4. LOCKED_STAGE enforcement
   {
-    const { ctx, sheets, token, tok1 } = makeFixture();
+    const { ctx, sheets, token, tok1, salt } = makeFixture();
     sheets.get('Config')._data[5][1] = 'Mid-Event';
     const res = ctx.recordScan(token, `202310001|${tok1}`, 'Check-Out');
     assert.strictEqual(res.status, 'REJECTED_STAGE_LOCKED');
@@ -111,7 +112,7 @@ function run() {
 
   // 5. ENFORCE_STAGE_ORDER enforcement
   {
-    const { ctx, sheets, token, tok1 } = makeFixture();
+    const { ctx, sheets, token, tok1, salt } = makeFixture();
     sheets.get('Config')._data[6][1] = 'TRUE';
     const rMid = ctx.recordScan(token, `202310001|${tok1}`, 'Mid-Event');
     assert.strictEqual(rMid.status, 'REJECTED_STAGE_ORDER');
@@ -142,6 +143,16 @@ function run() {
     assert.ok(cache.get('roster_map_v1') !== null);
     ctx.onSheetEdit({ range: { getSheet: () => sheets.get('Roster') } });
     assert.strictEqual(cache.get('roster_map_v1'), null);
+  }
+
+  // 8. Cache eviction on dedupe index falls back to authoritative Attendance Log
+  {
+    const { ctx, cache, token, tok1 } = makeFixture();
+    assert.strictEqual(ctx.recordScan(token, `202310001|${tok1}`, 'Check-In').status, 'OK');
+    // Evict dedupe cache completely
+    cache._store.clear();
+    // Second scan for same stage MUST still be flagged DUPLICATE from Attendance Log
+    assert.strictEqual(ctx.recordScan(token, `202310001|${tok1}`, 'Check-In').status, 'DUPLICATE');
   }
 
   console.log('PASS: record-scan.test.js');

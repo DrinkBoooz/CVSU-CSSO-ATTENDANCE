@@ -65,7 +65,7 @@ function run() {
     assert.strictEqual(revoked.status, 'UNAUTHORIZED');
   }
 
-  // 3. Throttling after 15 failed attempts in 2 minutes
+  // 3. Repeated wrong PINs apply bounded delay + warning without global gate DoS lockout
   {
     const { ctx, sleeps } = loadCode({
       sheets: {
@@ -79,11 +79,12 @@ function run() {
     for (let i = 0; i < 15; i++) {
       const r = ctx.verifyUsherPin('111111', 'Attacker');
       assert.strictEqual(r.ok, false);
+      assert.strictEqual(r.message, 'Incorrect Usher PIN.');
     }
     assert.ok(sleeps.length >= 15);
-    const throttled = ctx.verifyUsherPin('742915', 'Legit');
-    assert.strictEqual(throttled.ok, false);
-    assert.match(throttled.message, /too many/i);
+    // Legitimate usher with valid PIN is NOT globally locked out
+    const legit = ctx.verifyUsherPin('742915', 'Legit');
+    assert.strictEqual(legit.ok, true);
   }
 
   console.log('PASS: session-pin.test.js');

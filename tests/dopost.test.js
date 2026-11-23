@@ -18,7 +18,7 @@ function run() {
         ['USHER_PIN', '554433'],
         ['SECRET_SALT', salt],
         ['EVENT_TITLE', 'CSSO External Scanner'],
-        ['EVENT_ID', 'EXT-01'],
+        ['EVENT_ID', 'DEFAULT'],
         ['LOCKED_STAGE', 'AUTO']
       ],
       Roster: [
@@ -35,7 +35,7 @@ function run() {
   const login = post(ctx, { action: 'login', pin: '554433', usherName: 'Gate B' });
   assert.strictEqual(login.ok, true);
   assert.ok(login.sessionToken);
-  assert.strictEqual(login.eventId, 'EXT-01');
+  assert.strictEqual(login.eventId, 'DEFAULT');
 
   // 2. State via doPost
   const state = post(ctx, { action: 'state', sessionToken: login.sessionToken });
@@ -53,11 +53,16 @@ function run() {
   assert.strictEqual(unauth.status, 'UNAUTHORIZED');
   assert.strictEqual(sheets.get('Attendance Log').getLastRow(), 2);
 
-  // 5. Invalid JSON & unknown action
+  // 5. Invalid JSON vs internal handler exception separation
   const unknown = post(ctx, { action: 'nope' });
   assert.strictEqual(unknown.status, 'ERROR');
   const badJson = JSON.parse(ctx.doPost({ postData: { contents: '{bad' } }).getContent());
-  assert.strictEqual(badJson.status, 'ERROR');
+  assert.strictEqual(badJson.status, 'INVALID_JSON');
+
+  ctx.recordScan = () => { throw new Error('Simulated DB crash'); };
+  const internalErr = post(ctx, { action: 'scan', sessionToken: login.sessionToken, payload: `202310001|${tok}`, stage: 'Mid-Event' });
+  assert.strictEqual(internalErr.status, 'INTERNAL_ERROR');
+  assert.ok(internalErr.requestId);
 
   console.log('PASS: dopost.test.js');
 }
