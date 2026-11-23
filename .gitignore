@@ -1,0 +1,18 @@
+# Environment & Auth
+.clasprc.json
+.env
+*.log
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+
+# IDEs & Agents
+.vscode/
+.idea/
+.agent/
+.agents/
+
+# Project Folders
+/docs

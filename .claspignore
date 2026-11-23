@@ -1,0 +1,18 @@
+# Clasp ignore configuration for non-Apps-Script assets
+tools/**
+skills/**
+skills-to-edit/**
+.agents/**
+.agent/**
+tests/**
+scripts/**
+*.py
+*.xlsx
+*.xls
+*.docx
+*.md
+*.txt
+*.zip
+*.json
+!appsscript.json
+/docs/**

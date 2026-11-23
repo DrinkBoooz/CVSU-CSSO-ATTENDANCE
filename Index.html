@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Usher QR Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #111827;
+      color: #f9fafb;
+    }
+    .box {
+      max-width: 480px;
+      margin: 0 auto;
+    }
+    .card {
+      background: #1f2937;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: #9ca3af;
+      margin-bottom: 6px;
+    }
+    select, input, button {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: none;
+      margin-bottom: 12px;
+    }
+    button {
+      background: #2563eb;
+      color: #fff;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #374151;
+    }
+    #reader {
+      width: 100%;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #000;
+    }
+    .result-banner {
+      display: none;
+      padding: 18px;
+      border-radius: 12px;
+      margin-top: 12px;
+      text-align: center;
+    }
+    .res-ok { background: #065f46; border: 2px solid #34d399; }
+    .res-dup { background: #78350f; border: 2px solid #fbbf24; }
+    .res-bad { background: #7f1d1d; border: 2px solid #f87171; }
+    .big-name {
+      font-size: 26px;
+      font-weight: 800;
+      margin: 6px 0;
+      line-height: 1.2;
+    }
+    .sub-info {
+      font-size: 16px;
+      opacity: 0.95;
+    }
+  </style>
+</head>
+<body>
+<div class="box">
+  <div id="pinScreen" class="card">
+    <h2>Usher Scanner Login</h2>
+    <label for="pinInput">Enter Usher PIN</label>
+    <input id="pinInput" type="password" inputmode="numeric" placeholder="4-digit PIN" />
+    <label for="usherNameInput">Usher Name / Gate</label>
+    <input id="usherNameInput" type="text" placeholder="e.g., Gate A - Marco" />
+    <button onclick="unlockScanner()">Unlock Scanner</button>
+    <div id="pinError" style="color:#fca5a5; font-size:14px;"></div>
+  </div>
+
+  <div id="scannerScreen" style="display:none;">
+    <div class="card">
+      <h2 id="eventTitle" style="margin-top:0;">Event Scanner</h2>
+      <label for="stageSelect">Active Checkpoint Stage</label>
+      <select id="stageSelect">
+        <option value="Check-In">Check-In</option>
+        <option value="Mid-Event">Mid-Event</option>
+        <option value="Check-Out">Check-Out</option>
+      </select>
+      <button onclick="startCamera()">Start Camera</button>
+      <button class="secondary" onclick="stopCamera()">Pause Camera</button>
+      <div id="reader"></div>
+      <div id="statusNote" style="font-size:13px; color:#9ca3af; margin-top:8px;">Ready.</div>
+    </div>
+
+    <div id="resultBanner" class="result-banner">
+      <div id="resTitle" style="font-size:14px; font-weight:bold; letter-spacing:1px;"></div>
+      <div id="resName" class="big-name"></div>
+      <div id="resSub" class="sub-info"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let html5QrCode = null;
+  let isProcessing = false;
+  let usherLabel = 'Usher';
+
+  function unlockScanner() {
+    const pin = document.getElementById('pinInput').value;
+    usherLabel = document.getElementById('usherNameInput').value.trim() || 'Usher';
+    document.getElementById('pinError').textContent = 'Verifying...';
+
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res.ok) {
+          document.getElementById('pinScreen').style.display = 'none';
+          document.getElementById('scannerScreen').style.display = 'block';
+          document.getElementById('eventTitle').textContent = res.eventTitle;
+        } else {
+          document.getElementById('pinError').textContent = res.message;
+        }
+      })
+      .withFailureHandler(err => {
+        document.getElementById('pinError').textContent = err.message;
+      })
+      .verifyUsherPin(pin);
+  }
+
+  function startCamera() {
+    if (!html5QrCode) {
+      html5QrCode = new Html5Qrcode("reader");
+    }
+    document.getElementById('statusNote').textContent = 'Starting rear camera...';
+    html5QrCode.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: { width: 240, height: 240 } },
+      onScanSuccess,
+      () => {}
+    ).then(() => {
+      document.getElementById('statusNote').textContent = 'Scanning active.';
+    }).catch(err => {
+      document.getElementById('statusNote').textContent = 'Camera error: ' + err;
+    });
+  }
+
+  function stopCamera() {
+    if (html5QrCode && html5QrCode.isScanning) {
+      html5QrCode.stop().then(() => {
+        document.getElementById('statusNote').textContent = 'Camera paused.';
+      });
+    }
+  }
+
+  function onScanSuccess(decodedText) {
+    if (isProcessing) return;
+    isProcessing = true;
+
+    const stage = document.getElementById('stageSelect').value;
+    document.getElementById('statusNote').textContent = 'Checking pass...';
+
+    google.script.run
+      .withSuccessHandler(res => {
+        showResult(res);
+        setTimeout(() => {
+          isProcessing = false;
+          document.getElementById('statusNote').textContent = 'Scanning active.';
+        }, 1400);
+      })
+      .withFailureHandler(err => {
+        showResult({ status: 'ERROR', message: err.message });
+        setTimeout(() => { isProcessing = false; }, 1400);
+      })
+      .recordScan(decodedText, stage, usherLabel);
+  }
+
+  function showResult(res) {
+    const banner = document.getElementById('resultBanner');
+    const title = document.getElementById('resTitle');
+    const name = document.getElementById('resName');
+    const sub = document.getElementById('resSub');
+
+    banner.style.display = 'block';
+    banner.className = 'result-banner';
+
+    if (res.status === 'OK') {
+      banner.classList.add('res-ok');
+      title.textContent = 'VERIFIED - ' + res.stage.toUpperCase();
+      name.textContent = res.fullName;
+      sub.textContent = `ID: ${res.studentId} | ${res.section || 'No Section'} | ${res.time}`;
+    } else if (res.status === 'DUPLICATE') {
+      banner.classList.add('res-dup');
+      title.textContent = 'ALREADY SCANNED';
+      name.textContent = res.fullName || 'Duplicate Scan';
+      sub.textContent = `${res.studentId || ''} - ${res.message}`;
+    } else {
+      banner.classList.add('res-bad');
+      title.textContent = 'REJECTED';
+      name.textContent = res.status;
+      sub.textContent = res.message || 'Invalid QR code.';
+    }
+  }
+</script>
+</body>
+</html>
