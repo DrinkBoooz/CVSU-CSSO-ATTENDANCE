@@ -177,6 +177,7 @@
   const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec';
   const API_URL = new URLSearchParams(window.location.search).get('api') || DEFAULT_API_URL;
   const SESSION_KEY = 'csso_session_token';
+  const LOCAL_SEEN_KEY = 'csso_local_seen_v1';
   const CAMERA_COOLDOWN_MS = 4000;
   const FETCH_TIMEOUT_MS = 15000;
   const KEEP_WARM_INTERVAL_MS = 240000; // 4 minutes (prevents Apps Script V8 cold starts)
@@ -185,11 +186,32 @@
   let isProcessing = false;
   let isStarting = false;
   let sessionToken = '';
+  let activeEventId = 'DEFAULT';
+  let localSeen = {};
   let lastCameraPayload = '';
   let lastCameraTime = 0;
   let acceptedCount = 0;
   let audioCtx = null;
   let keepWarmTimer = null;
+
+  function loadLocalSeen() {
+    try {
+      const raw = sessionStorage.getItem(LOCAL_SEEN_KEY);
+      localSeen = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      localSeen = {};
+    }
+  }
+
+  function rememberLocalSeen(eventId, stage, payload, res) {
+    const key = `${eventId}|${stage}|${payload}`;
+    localSeen[key] = {
+      studentId: res.studentId || '',
+      fullName: res.fullName || '',
+      section: res.section || ''
+    };
+    try { sessionStorage.setItem(LOCAL_SEEN_KEY, JSON.stringify(localSeen)); } catch (e) {}
+  }
 
   function startKeepWarm() {
     if (keepWarmTimer) return;
@@ -267,6 +289,8 @@
 
   function applyScannerState(res) {
     startKeepWarm();
+    activeEventId = res.eventId || 'DEFAULT';
+    loadLocalSeen();
     document.getElementById('pinScreen').style.display = 'none';
     document.getElementById('scannerScreen').style.display = 'block';
     document.getElementById('eventTitle').textContent = res.eventTitle || 'Event Scanner';
@@ -288,7 +312,11 @@
     stopKeepWarm();
     stopCamera();
     sessionToken = '';
-    try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
+    localSeen = {};
+    try {
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(LOCAL_SEEN_KEY);
+    } catch (e) {}
     document.getElementById('scannerScreen').style.display = 'none';
     document.getElementById('pinScreen').style.display = 'block';
     document.getElementById('pinInput').value = '';
@@ -423,12 +451,28 @@
 
     const stage = document.getElementById('stageSelect').value;
     const statusEl = document.getElementById('statusNote');
-    statusEl.textContent = 'Checking pass...';
 
     const resetReady = () => {
       isProcessing = false;
       statusEl.textContent = (html5QrCode && html5QrCode.isScanning) ? 'Scanning active.' : 'Ready.';
     };
+
+    // Instant (<5ms) O(1) local duplicate short-circuit for camera scans already confirmed in this session
+    const localKey = `${activeEventId}|${stage}|${payloadText}`;
+    if (!fromManual && localSeen[localKey]) {
+      const hit = localSeen[localKey];
+      showResult({
+        status: 'DUPLICATE',
+        studentId: hit.studentId,
+        fullName: hit.fullName,
+        section: hit.section,
+        message: `Already scanned for ${stage} (instant local check).`
+      });
+      setTimeout(resetReady, 300);
+      return;
+    }
+
+    statusEl.textContent = 'Checking pass...';
 
     try {
       const res = await apiCall({ action: 'scan', sessionToken, payload: payloadText, stage });
@@ -437,6 +481,9 @@
         playTone('bad');
         returnToPinScreen(res.message || 'Session expired. Please log in again.');
         return;
+      }
+      if (res && (res.status === 'OK' || res.status === 'DUPLICATE')) {
+        rememberLocalSeen(res.eventId || activeEventId, stage, payloadText, res);
       }
       showResult(res || { status: 'ERROR', message: 'Empty server response.' });
       setTimeout(resetReady, 300);
