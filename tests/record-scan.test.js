@@ -155,6 +155,37 @@ function run() {
     assert.strictEqual(ctx.recordScan(token, `202310001|${tok1}`, 'Check-In').status, 'DUPLICATE');
   }
 
+  // 9. Lock contention: tryLock() === false returns busy, writes 0 rows, does not mutate cache, does not call releaseLock()
+  {
+    const { ctx, sheets, cache, lock, lockStats, token, tok1 } = makeFixture();
+    lock._setHeld(true);
+    const beforeTry = lockStats.tryLockCalls;
+    const beforeRel = lockStats.releaseLockCalls;
+
+    const busy = ctx.recordScan(token, `202310001|${tok1}`, 'Check-In');
+    assert.strictEqual(busy.status, 'ERROR');
+    assert.match(busy.message, /Scanner busy/i);
+    assert.strictEqual(lockStats.tryLockCalls, beforeTry + 1);
+    assert.strictEqual(lockStats.releaseLockCalls, beforeRel); // releaseLock NOT called when not acquired
+    assert.strictEqual(sheets.get('Attendance Log').getLastRow(), 1);
+    assert.strictEqual(cache.get('evt_seen_DEFAULT_202310001'), null);
+
+    // Release lock -> normal scan acquires & releases lock cleanly
+    lock._setHeld(false);
+    const ok = ctx.recordScan(token, `202310001|${tok1}`, 'Check-In');
+    assert.strictEqual(ok.status, 'OK');
+    assert.strictEqual(lockStats.releaseLockCalls, beforeRel + 1);
+    assert.strictEqual(lock._isHeld(), false);
+
+    // Exception inside lock still calls releaseLock() via finally
+    const origGetRange = sheets.get('Attendance Log').getRange.bind(sheets.get('Attendance Log'));
+    sheets.get('Attendance Log').getRange = () => { throw new Error('Simulated sheet failure'); };
+    assert.throws(() => ctx.recordScan(token, `202310001|${tok1}`, 'Mid-Event'), /Simulated sheet failure/);
+    assert.strictEqual(lockStats.releaseLockCalls, beforeRel + 2);
+    assert.strictEqual(lock._isHeld(), false);
+    sheets.get('Attendance Log').getRange = origGetRange;
+  }
+
   console.log('PASS: record-scan.test.js');
 }
 

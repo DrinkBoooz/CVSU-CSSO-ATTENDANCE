@@ -137,13 +137,13 @@ function run() {
     assert.strictEqual(env.ctx.recordScan(sess2, `v2|DEFAULT|202310002|${newV2}`, 'Mid-Event').status, 'OK');
   }
 
-  // 4. TARGET_EVENT_ID pre-issuance + resumable 7-step EVENT_TRANSITION_PENDING + irreversible V1_COMPAT_RETIRED
+  // 4. TARGET_EVENT_ID pre-issuance + readiness/reconciliation + resumable 7-step transition at EVERY boundary
   {
     const env = makeEnv({
       eventId: 'DEFAULT',
       scriptProperties: { V1_COMPAT_EVENT_ID: 'DEFAULT', SECRET_SALT: '0123456789abcdef0123456789abcdef', USHER_PIN: '619482' }
     });
-    const { ctx, sheets, scriptProps, sessionToken, salt } = env;
+    const { ctx, sheets, scriptProps, sessionToken, salt, gmailSentEmails } = env;
 
     // Reject DEFAULT or current active ID as TARGET_EVENT_ID
     assert.throws(() => ctx.setTargetEventId('DEFAULT'), /DEFAULT/i);
@@ -152,23 +152,54 @@ function run() {
     ctx.setTargetEventId('CSSO-2026-ASSEMBLY');
     assert.strictEqual(scriptProps.get('TARGET_EVENT_ID'), 'CSSO-2026-ASSEMBLY');
 
-    // Issue target-event v2 passes without changing active Config.EVENT_ID
-    const targetV2_1 = v2Sig('CSSO-2026-ASSEMBLY', '202310001', salt);
-    const targetV2_2 = v2Sig('CSSO-2026-ASSEMBLY', '202310002', salt);
+    // Step 2 boundary: transition fails closed before target-event v2 issuance & reconciliation
+    assert.throws(() => ctx.transitionToTargetEvent(), /readiness|issuance|acknowledge/i);
+    assert.strictEqual(ctx.getConfig_().EVENT_ID, 'DEFAULT');
+    assert.strictEqual(ctx.getConfig_().V1_COMPAT_RETIRED, false);
+
+    // Issue target-event v2 passes via sendPasses_ (mode='TARGET') without changing active Config.EVENT_ID
+    const issued = ctx.issueTargetEventV2Passes();
+    assert.strictEqual(issued.ok, true);
+    assert.strictEqual(issued.sent, 2);
     assert.strictEqual(ctx.getConfig_().EVENT_ID, 'DEFAULT');
 
+    const roster = sheets.get('Roster');
+    assert.strictEqual(roster._data[1][12], 'v2'); // Pass Protocol
+    assert.strictEqual(roster._data[1][13], 'CSSO-2026-ASSEMBLY'); // Pass Event ID
+    assert.ok(gmailSentEmails[0].body.includes(`v2|CSSO-2026-ASSEMBLY|202310001|${roster._data[1][4]}`));
+
     // Before activation: target v2 rejected, existing v1 still accepted
-    assert.strictEqual(ctx.recordScan(sessionToken, `v2|CSSO-2026-ASSEMBLY|202310001|${targetV2_1}`, 'Check-In').status, 'REJECTED_WRONG_EVENT');
+    const targetPayload1 = `v2|CSSO-2026-ASSEMBLY|202310001|${roster._data[1][4]}`;
+    const targetPayload2 = `v2|CSSO-2026-ASSEMBLY|202310002|${roster._data[2][4]}`;
+    assert.strictEqual(ctx.recordScan(sessionToken, targetPayload1, 'Check-In').status, 'REJECTED_WRONG_EVENT');
     assert.strictEqual(ctx.recordScan(sessionToken, `202310001|${v1Sig('202310001', salt)}`, 'Check-In').status, 'OK');
 
-    // Simulate interruption right after Step 4 (V1_COMPAT_RETIRED = TRUE, before Config.EVENT_ID updated)
-    scriptProps.set('EVENT_TRANSITION_PENDING', 'TRUE');
-    scriptProps.set('V1_COMPAT_RETIRED', 'TRUE');
+    // Reconciliation report lists DISPATCHED as unconfirmed until operator acknowledges
+    const report = ctx.reconcileTargetEventDistribution();
+    assert.strictEqual(report.readyToAcknowledge, true);
+    assert.strictEqual(report.unresolvedRecipients.length, 2); // DISPATCHED != inbox delivery
+    assert.throws(() => ctx.transitionToTargetEvent(), /acknowledge/i);
 
-    // While retired, v1 is rejected even though Config.EVENT_ID is still DEFAULT
+    // Acknowledge distribution, then mutate roster -> invalidates acknowledgement
+    ctx.acknowledgeTargetDistribution(report.digest);
+    const origSec = roster._data[1][3];
+    roster._data[1][0] = '202310001-MOD';
+    assert.throws(() => ctx.transitionToTargetEvent(), /readiness|issuance|acknowledge/i);
+    roster._data[1][0] = '202310001';
+    roster._data[1][3] = origSec;
+    ctx.acknowledgeTargetDistribution(ctx.reconcileTargetEventDistribution().digest);
+
+    // Boundary interruption tests for Steps 3, 4, 5, 6
+    // Interrupt after Step 3 (EVENT_TRANSITION_PENDING=TRUE, before retirement) -> resume succeeds
+    scriptProps.set('EVENT_TRANSITION_PENDING', 'TRUE');
+    assert.strictEqual(ctx.getConfig_().V1_COMPAT_RETIRED, false);
+
+    // Interrupt after Step 4 (V1_COMPAT_RETIRED=TRUE, before Config.EVENT_ID updated) -> v1 rejected, resume succeeds
+    scriptProps.set('V1_COMPAT_RETIRED', 'TRUE');
     assert.strictEqual(ctx.recordScan(sessionToken, `202310002|${v1Sig('202310002', salt)}`, 'Check-In').status, 'REJECTED_V1_RETIRED');
 
-    // Resume transition -> completes Steps 5-7 cleanly
+    // Interrupt after Step 5 (Config.EVENT_ID updated, EVENT_TRANSITION_PENDING still TRUE) -> resume verifies & clears pending
+    sheets.get('Config')._data[4][1] = 'CSSO-2026-ASSEMBLY';
     const res = ctx.transitionToTargetEvent();
     assert.strictEqual(res.ok, true);
     assert.strictEqual(ctx.getConfig_().EVENT_ID, 'CSSO-2026-ASSEMBLY');
@@ -176,12 +207,62 @@ function run() {
     assert.strictEqual(scriptProps.get('EVENT_TRANSITION_PENDING') || null, null);
 
     // After activation: target v2 accepted, old DEFAULT v2 & v1 rejected
-    assert.strictEqual(ctx.recordScan(sessionToken, `v2|CSSO-2026-ASSEMBLY|202310002|${targetV2_2}`, 'Check-In').status, 'OK');
+    assert.strictEqual(ctx.recordScan(sessionToken, targetPayload2, 'Check-In').status, 'OK');
     assert.strictEqual(ctx.recordScan(sessionToken, `v2|DEFAULT|202310002|${v2Sig('DEFAULT', '202310002', salt)}`, 'Mid-Event').status, 'REJECTED_WRONG_EVENT');
 
-    // Attempted reactivation by restoring Config.EVENT_ID = DEFAULT -> v1 STILL permanently rejected
-    sheets.get('Config')._data[4][1] = 'DEFAULT';
-    assert.strictEqual(ctx.recordScan(sessionToken, `202310002|${v1Sig('202310002', salt)}`, 'Mid-Event').status, 'REJECTED_V1_RETIRED');
+    // Ordinary issuance after retirement uses v2 for active event, never v1
+    roster._data.push(['202699999', 'new@cvsu.edu.ph', 'New Student', 'BSCS 1-1', '', '', '', '', '', '', '', '', '', '']);
+    ctx.generateAndEmailQRPasses();
+    assert.strictEqual(roster._data[3][12], 'v2');
+    assert.strictEqual(roster._data[3][13], 'CSSO-2026-ASSEMBLY');
+    assert.strictEqual(roster._data[3][4], v2Sig('CSSO-2026-ASSEMBLY', '202699999', salt));
+
+    // Row-shift protection during target-event issuance
+    {
+      const envShift = makeEnv({
+        eventId: 'DEFAULT',
+        scriptProperties: {
+          V1_COMPAT_EVENT_ID: 'DEFAULT',
+          TARGET_EVENT_ID: 'CSSO-2026-ASSEMBLY',
+          SECRET_SALT: '0123456789abcdef0123456789abcdef',
+          USHER_PIN: '619482'
+        }
+      });
+      const origSleep = envShift.ctx.Utilities.sleep;
+      envShift.ctx.Utilities.sleep = () => {
+        envShift.sheets.get('Roster')._data[1][0] = '999999999';
+      };
+      envShift.ctx.issueTargetEventV2Passes();
+      envShift.ctx.Utilities.sleep = origSleep;
+      assert.ok(!envShift.sheets.get('Roster')._data[1][12]);
+      assert.ok(envShift.uiAlerts.some(a => /shifted|mismatch/i.test(String(a.body))));
+    }
+
+    // Step 1 boundary: missing TARGET_EVENT_ID fails closed without changing Config or retiring v1
+    {
+      const env1 = makeEnv({ eventId: 'DEFAULT', scriptProperties: { V1_COMPAT_EVENT_ID: 'DEFAULT', SECRET_SALT: salt, USHER_PIN: '619482' } });
+      assert.throws(() => env1.ctx.transitionToTargetEvent(), /TARGET_EVENT_ID/i);
+      assert.strictEqual(env1.ctx.getConfig_().V1_COMPAT_RETIRED, false);
+    }
+
+    // Step 6 boundary: if self-verification fails, EVENT_TRANSITION_PENDING stays TRUE until resolved
+    {
+      const env6 = makeEnv({
+        eventId: 'DEFAULT',
+        scriptProperties: { V1_COMPAT_EVENT_ID: 'DEFAULT', TARGET_EVENT_ID: 'CSSO-2026-FAIL', SECRET_SALT: salt, USHER_PIN: '619482' }
+      });
+      env6.ctx.issueTargetEventV2Passes();
+      env6.ctx.acknowledgeTargetDistribution(env6.ctx.reconcileTargetEventDistribution().digest);
+      const origVerify = env6.ctx.verifyV2Signature_;
+      env6.ctx.verifyV2Signature_ = () => false;
+      assert.throws(() => env6.ctx.transitionToTargetEvent(), /verification failed/i);
+      assert.strictEqual(env6.scriptProps.get('EVENT_TRANSITION_PENDING'), 'TRUE');
+      assert.strictEqual(env6.scriptProps.get('V1_COMPAT_RETIRED'), 'TRUE');
+      // Resume after fixing verification -> clears pending cleanly
+      env6.ctx.verifyV2Signature_ = origVerify;
+      assert.strictEqual(env6.ctx.transitionToTargetEvent().ok, true);
+      assert.strictEqual(env6.scriptProps.get('EVENT_TRANSITION_PENDING') || null, null);
+    }
   }
 
   console.log('PASS: crypto-migration.test.js');

@@ -223,14 +223,21 @@ function loadCode(opts = {}) {
   };
 
   let lockHeld = Boolean(opts.lockHeld);
+  const lockStats = { tryLockCalls: 0, releaseLockCalls: 0 };
   const lock = {
     tryLock() {
+      lockStats.tryLockCalls++;
       if (lockHeld) return false;
       lockHeld = true;
       return true;
     },
-    releaseLock() { lockHeld = false; },
-    _setHeld(v) { lockHeld = v; }
+    releaseLock() {
+      lockStats.releaseLockCalls++;
+      lockHeld = false;
+    },
+    _setHeld(v) { lockHeld = v; },
+    _isHeld() { return lockHeld; },
+    _stats: lockStats
   };
 
   let remainingQuota = opts.emailQuota !== undefined ? opts.emailQuota : 100;
@@ -441,6 +448,7 @@ function loadCode(opts = {}) {
     cache,
     scriptProps,
     lock,
+    lockStats,
     sentEmails,
     gmailSentEmails,
     uiAlerts,

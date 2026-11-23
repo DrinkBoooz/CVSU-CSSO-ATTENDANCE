@@ -241,6 +241,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Generate & Email QR Passes (All Pending)', 'generateAndEmailQRPasses')
     .addItem('Send QR Pass to Selected Row(s)', 'sendQRPassesToSelectedRows')
+    .addItem('Issue Target-Event v2 Passes (Pending)', 'issueTargetEventV2Passes')
     .addItem('Rebuild Verified Attendance', 'rebuildVerifiedAttendance')
     .addToUi();
 }
@@ -651,16 +652,31 @@ function recordScan(sessionToken, payloadStr, stage) {
 }
 
 /**
- * Generates and emails signed QR passes for all pending Roster rows (Pass Status != 'SENT').
+ * Generates and emails signed QR passes for all pending Roster rows (Active event mode).
  */
 function generateAndEmailQRPasses() {
-  return sendPasses_(null, true);
+  return sendPasses_(null, true, { mode: 'ACTIVE' });
 }
 
 /**
  * Generates and emails signed QR passes only for the currently selected Roster row(s).
  */
 function sendQRPassesToSelectedRows() {
+  return sendSelectedRowsWithMode_('ACTIVE');
+}
+
+/**
+ * Pre-issues v2 passes for persisted TARGET_EVENT_ID without changing active Config.EVENT_ID.
+ */
+function issueTargetEventV2Passes() {
+  return sendPasses_(null, true, { mode: 'TARGET' });
+}
+
+function issueTargetEventV2PassesSelectedRows() {
+  return sendSelectedRowsWithMode_('TARGET');
+}
+
+function sendSelectedRowsWithMode_(mode) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const activeSheet = ss.getActiveSheet();
   if (!activeSheet || activeSheet.getName() !== 'Roster') {
@@ -676,20 +692,26 @@ function sendQRPassesToSelectedRows() {
   const endRow = range.getLastRow();
   const indices = [];
   for (let r = startRow; r <= endRow; r++) {
-    if (r >= 2) indices.push(r - 1); // 0-based index into getDataRange()
+    if (r >= 2) indices.push(r - 1);
   }
   if (indices.length === 0) {
     SpreadsheetApp.getUi().alert('Select student rows (row 2 or below), not the header row.');
     return;
   }
-  return sendPasses_(indices, true);
+  return sendPasses_(indices, true, { mode: mode || 'ACTIVE' });
 }
 
 /**
  * Shared quota-safe, lock-protected, row-shift-verified email sender using GmailApp.
- * Sets Pass Status = 'DISPATCHED' (accepting legacy 'SENT' as already-dispatched).
+ * Explicit mode: 'ACTIVE' (v1 only while !V1_COMPAT_RETIRED && EVENT_ID === V1_COMPAT_EVENT_ID;
+ * otherwise v2 for active EVENT_ID) or 'TARGET' (v2 for persisted TARGET_EVENT_ID).
  */
-function sendPasses_(targetRowIndices, requireConfirm) {
+function sendPasses_(targetRowIndices, requireConfirm, opts) {
+  const mode = opts && opts.mode ? String(opts.mode).trim().toUpperCase() : 'ACTIVE';
+  if (mode !== 'ACTIVE' && mode !== 'TARGET') {
+    throw new Error('Invalid issuance mode: ' + mode);
+  }
+
   const ui = SpreadsheetApp.getUi();
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(0)) {
@@ -706,26 +728,53 @@ function sendPasses_(targetRowIndices, requireConfirm) {
     const cfg = getConfig_();
     requireSecureConfig_(cfg);
 
+    let issueProtocol = 'v2';
+    let issueEventId = cfg.EVENT_ID;
+
+    if (mode === 'TARGET') {
+      const targetId = validateV2Field_(cfg.TARGET_EVENT_ID || '', 'TARGET_EVENT_ID');
+      if (targetId === 'DEFAULT' || targetId === cfg.EVENT_ID) {
+        throw new Error('TARGET_EVENT_ID must be a non-DEFAULT event distinct from active Config.EVENT_ID.');
+      }
+      issueProtocol = 'v2';
+      issueEventId = targetId;
+    } else {
+      const compatEventId = cfg.V1_COMPAT_EVENT_ID || 'DEFAULT';
+      if (!cfg.V1_COMPAT_RETIRED && cfg.EVENT_ID === compatEventId) {
+        issueProtocol = 'v1';
+      } else {
+        issueProtocol = 'v2';
+      }
+      issueEventId = cfg.EVENT_ID;
+    }
+
     const lastRow = rosterSheet.getLastRow();
     if (lastRow <= 1) {
       ui.alert('Roster is empty.');
       return { ok: true, sent: 0 };
     }
 
-    const totalCols = Math.max(12, rosterSheet.getLastColumn());
+    const totalCols = Math.max(14, rosterSheet.getLastColumn());
     const data = rosterSheet.getRange(1, 1, lastRow, totalCols).getValues();
     const candidateIndices = targetRowIndices
       ? targetRowIndices.filter(i => i >= 1 && i < data.length)
       : Array.from({ length: data.length - 1 }, (_, k) => k + 1);
 
-    const isAlreadyDispatched = status => status === 'SENT' || status === 'DISPATCHED';
+    const isAlreadyDispatchedForTarget = row => {
+      const status = String(row[5] || '').trim();
+      if (mode === 'TARGET') {
+        const rowProto = String(row[12] || '').trim();
+        const rowEvt = String(row[13] || '').trim();
+        return status === 'DISPATCHED' && rowProto === 'v2' && rowEvt === issueEventId;
+      }
+      return status === 'SENT' || status === 'DISPATCHED';
+    };
 
     const pendingIndices = candidateIndices.filter(i => {
       const studentId = String(data[i][0] || '').trim();
       const cleanEmail = String(data[i][1] || '').trim();
-      const status = String(data[i][5] || '').trim();
       if (!studentId || !cleanEmail) return false;
-      return targetRowIndices ? true : !isAlreadyDispatched(status);
+      return targetRowIndices ? true : !isAlreadyDispatchedForTarget(data[i]);
     });
 
     if (pendingIndices.length === 0) {
@@ -735,11 +784,11 @@ function sendPasses_(targetRowIndices, requireConfirm) {
 
     const initialQuota = MailApp.getRemainingDailyQuota();
     if (requireConfirm) {
-      const alreadyCount = pendingIndices.filter(i => isAlreadyDispatched(String(data[i][5] || '').trim())).length;
+      const alreadyCount = pendingIndices.filter(i => isAlreadyDispatchedForTarget(data[i])).length;
       const resendNote = alreadyCount > 0 ? `\nAlready dispatched in selection: ${alreadyCount} (will be re-sent).` : '';
       const resp = ui.alert(
         'Confirm QR Pass Emailing',
-        `Ready to dispatch ${pendingIndices.length} participant(s) via GmailApp.${resendNote}\nRemaining daily email quota: ${initialQuota}.\n\nProceed?`,
+        `Mode: ${mode} (${issueProtocol}, Event: ${issueEventId})\nReady to dispatch ${pendingIndices.length} participant(s) via GmailApp.${resendNote}\nRemaining daily email quota: ${initialQuota}.\n\nProceed?`,
         ui.ButtonSet.YES_NO
       );
       if (resp !== ui.Button.YES) return { ok: false, reason: 'CANCELLED' };
@@ -749,6 +798,7 @@ function sendPasses_(targetRowIndices, requireConfirm) {
     const expectedNormIds = [];
     const efUpdates = [];
     const hlUpdates = [];
+    const mnUpdates = [];
     const touchedSet = new Set();
 
     for (let i = 1; i < data.length; i++) {
@@ -761,6 +811,7 @@ function sendPasses_(targetRowIndices, requireConfirm) {
         data[i][10] || '',
         data[i][11] || ''
       ]);
+      mnUpdates.push([data[i][12] || '', data[i][13] || '']);
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -783,13 +834,21 @@ function sendPasses_(targetRowIndices, requireConfirm) {
         const cleanEmail = String(data[i][1] || '').trim();
         const fullName = data[i][2];
         const section = data[i][3];
-        const token = createSignature_(studentId, cfg.SECRET_SALT);
+        const token = issueProtocol === 'v2'
+          ? createV2Signature_(issueEventId, studentId, cfg.SECRET_SALT)
+          : createSignature_(studentId, cfg.SECRET_SALT);
+        const payload = issueProtocol === 'v2'
+          ? `v2|${issueEventId}|${studentId}|${token}`
+          : `${studentId}|${token}`;
+
         const prevAttempts = Number(data[i][9]) || 0;
         const attemptNum = prevAttempts + 1;
 
         touchedSet.add(i - 1);
         efUpdates[i - 1][0] = token;
         hlUpdates[i - 1][2] = attemptNum;
+        mnUpdates[i - 1][0] = issueProtocol;
+        mnUpdates[i - 1][1] = issueEventId;
 
         if (!emailRegex.test(cleanEmail)) {
           efUpdates[i - 1][1] = 'INVALID_EMAIL';
@@ -798,7 +857,6 @@ function sendPasses_(targetRowIndices, requireConfirm) {
           continue;
         }
 
-        const payload = `${studentId}|${token}`;
         let qrBlob;
         try {
           qrBlob = generateQrPngBlob_(payload, `Pass_${studentId}.png`);
@@ -810,9 +868,9 @@ function sendPasses_(targetRowIndices, requireConfirm) {
         }
 
         try {
-          const subject = `${cfg.EVENT_TITLE} - Your QR Attendance Pass`;
+          const subject = `${cfg.EVENT_TITLE} (${issueEventId}) - Your QR Attendance Pass`;
           const plainBody = [
-            `${cfg.EVENT_TITLE}`,
+            `${cfg.EVENT_TITLE} (${issueEventId})`,
             `Participant: ${fullName || 'Participant'}`,
             `Student ID: ${studentId}${section ? ' | ' + section : ''}`,
             `Manual Pass Code: ${payload}`,
@@ -823,6 +881,7 @@ function sendPasses_(targetRowIndices, requireConfirm) {
           const htmlBody = `
             <div style="font-family: Arial, sans-serif; max-width: 420px; margin: 0 auto; border: 1px solid #d0d7de; border-radius: 10px; padding: 20px; text-align: center;">
               <h2 style="margin: 0 0 8px 0;">${escapeHtml_(cfg.EVENT_TITLE)}</h2>
+              <p style="margin: 0 0 8px 0; font-size: 12px; color: #555;">Event: ${escapeHtml_(issueEventId)}</p>
               <p style="margin: 4px 0; font-size: 16px;"><strong>${escapeHtml_(fullName || 'Participant')}</strong></p>
               <p style="margin: 4px 0 14px 0; color: #555;">ID: ${escapeHtml_(studentId)}${section ? ' | ' + escapeHtml_(section) : ''}</p>
               <img src="cid:qrpass" alt="QR Pass" style="width: 240px; height: 240px;" />
@@ -871,14 +930,15 @@ function sendPasses_(targetRowIndices, requireConfirm) {
         } else {
           rosterSheet.getRange(2, 5, rowCount, 2).setValues(efUpdates);
           rosterSheet.getRange(2, 8, rowCount, 5).setValues(hlUpdates);
+          rosterSheet.getRange(2, 13, rowCount, 2).setValues(mnUpdates);
         }
       }
       invalidateRosterCache_();
     }
 
-    const summary = `Dispatched: ${sent}\nErrors: ${errors}` + (stoppedReason ? `\nNote: ${stoppedReason}` : '');
+    const summary = `Mode: ${mode} (${issueProtocol} / ${issueEventId})\nDispatched: ${sent}\nErrors: ${errors}` + (stoppedReason ? `\nNote: ${stoppedReason}` : '');
     ui.alert('QR Pass Email Summary', summary, ui.ButtonSet.OK);
-    return { ok: true, sent, errors, stoppedReason };
+    return { ok: true, mode, protocol: issueProtocol, eventId: issueEventId, sent, errors, stoppedReason };
   } finally {
     lock.releaseLock();
   }
@@ -1086,7 +1146,7 @@ function ensureConfigKeys_(ss) {
 function ensureSheetsAndHeaders_(ss) {
   const specs = [
     { name: 'Config', headers: ['Key', 'Value', 'Notes'] },
-    { name: 'Roster', headers: ['Student ID', 'Email', 'Full Name', 'Section', 'Token', 'Pass Status', 'QR Preview', 'Last Sent Token', 'Last Sent ID', 'Attempt #', 'Dispatched At', 'Last Error'] },
+    { name: 'Roster', headers: ['Student ID', 'Email', 'Full Name', 'Section', 'Token', 'Pass Status', 'QR Preview', 'Last Sent Token', 'Last Sent ID', 'Attempt #', 'Dispatched At', 'Last Error', 'Pass Protocol', 'Pass Event ID'] },
     { name: 'Attendance Log', headers: ['Timestamp', 'Stage', 'Student ID', 'Full Name', 'Section', 'Usher Label', 'Scan Status', 'Event ID'] },
     { name: 'Verified Attendance', headers: ['Student ID', 'Full Name', 'Section', 'Check-In', 'Mid-Event', 'Check-Out', 'Qualification', 'Stage Count'] }
   ];
@@ -1383,10 +1443,117 @@ function setTargetEventId(targetEventId) {
 }
 
 /**
+ * Evaluates roster-wide readiness and distribution reconciliation for TARGET_EVENT_ID.
+ * Note: DISPATCHED is never treated as proof of inbox delivery; unresolvedRecipients
+ * must be explicitly acknowledged by the operator before transition.
+ */
+function evaluateTransitionReadiness_(ss, cfg, targetId) {
+  const audit = auditRosterIntegrity_(ss);
+  const rosterSheet = ss.getSheetByName('Roster');
+  const missingIssuance = [];
+  const failedDispatch = [];
+  const unresolvedRecipients = [];
+  const digestParts = [targetId];
+
+  if (!rosterSheet || rosterSheet.getLastRow() <= 1) {
+    return {
+      targetId,
+      eligibleCount: 0,
+      duplicates: audit.duplicateIds,
+      invalidRecords: [...audit.invalidEmails, ...audit.missingNames],
+      missingIssuance: [{ row: 0, reason: 'Roster is empty' }],
+      failedDispatch,
+      unresolvedRecipients,
+      readyToAcknowledge: false,
+      digest: ''
+    };
+  }
+
+  const lastRow = rosterSheet.getLastRow();
+  const totalCols = Math.max(14, rosterSheet.getLastColumn());
+  const rows = rosterSheet.getRange(2, 1, lastRow - 1, totalCols).getValues();
+  let eligibleCount = 0;
+
+  for (let i = 0; i < rows.length; i++) {
+    const rowNum = i + 2;
+    const rawId = String(rows[i][0] || '').trim().toUpperCase();
+    const email = String(rows[i][1] || '').trim();
+    const fullName = String(rows[i][2] || '').trim();
+    const token = String(rows[i][4] || '').trim().toUpperCase();
+    const status = String(rows[i][5] || '').trim();
+    const lastSentToken = String(rows[i][7] || '').trim().toUpperCase();
+    const lastSentId = String(rows[i][8] || '').trim().toUpperCase();
+    const proto = String(rows[i][12] || '').trim();
+    const passEvt = String(rows[i][13] || '').trim();
+
+    if (!rawId && !email && !fullName) continue;
+    eligibleCount++;
+
+    const expectedV2 = rawId ? createV2Signature_(targetId, rawId, cfg.SECRET_SALT) : '';
+    if (proto !== 'v2' || passEvt !== targetId || token !== expectedV2 || lastSentToken !== expectedV2 || lastSentId !== rawId) {
+      missingIssuance.push({ row: rowNum, studentId: rawId, proto, passEvt });
+    } else if (status !== 'DISPATCHED') {
+      failedDispatch.push({ row: rowNum, studentId: rawId, status });
+    } else {
+      unresolvedRecipients.push({ row: rowNum, studentId: rawId, email, status: 'DISPATCHED_UNCONFIRMED' });
+    }
+
+    digestParts.push([normalizeId_(rawId), email, fullName, token, status, lastSentToken, lastSentId, proto, passEvt].join('|'));
+  }
+
+  const invalidRecords = [...audit.invalidEmails, ...audit.missingNames];
+  const readyToAcknowledge = (
+    eligibleCount > 0 &&
+    audit.duplicateIds.length === 0 &&
+    invalidRecords.length === 0 &&
+    missingIssuance.length === 0 &&
+    failedDispatch.length === 0
+  );
+  const digest = sha256HexPrefix_(digestParts.join('\n'), 32);
+
+  return {
+    targetId,
+    eligibleCount,
+    duplicates: audit.duplicateIds,
+    invalidRecords,
+    missingIssuance,
+    failedDispatch,
+    unresolvedRecipients,
+    readyToAcknowledge,
+    digest
+  };
+}
+
+function reconcileTargetEventDistribution() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const cfg = getConfig_();
+  requireSecureConfig_(cfg);
+  const targetId = validateV2Field_(cfg.TARGET_EVENT_ID || '', 'TARGET_EVENT_ID');
+  return evaluateTransitionReadiness_(ss, cfg, targetId);
+}
+
+function acknowledgeTargetDistribution(expectedDigest) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const cfg = getConfig_();
+  requireSecureConfig_(cfg);
+  const targetId = validateV2Field_(cfg.TARGET_EVENT_ID || '', 'TARGET_EVENT_ID');
+  const report = evaluateTransitionReadiness_(ss, cfg, targetId);
+  if (!report.readyToAcknowledge) {
+    throw new Error('Roster is not ready for distribution acknowledgement (fix duplicates, invalid records, missing issuance, or failed dispatches first).');
+  }
+  if (expectedDigest && String(expectedDigest).trim() !== report.digest) {
+    throw new Error('Distribution state changed since reconciliation report was generated; re-run reconciliation.');
+  }
+  PropertiesService.getScriptProperties().setProperty('TRANSITION_RECON_ACK', `${targetId}|${report.digest}`);
+  return { ok: true, targetId, digest: report.digest };
+}
+
+/**
  * Resumable 7-step transition from active event (e.g., DEFAULT) to TARGET_EVENT_ID:
- * 1) Validate TARGET_EVENT_ID, 2) Verify readiness, 3) Persist EVENT_TRANSITION_PENDING,
- * 4) Persist V1_COMPAT_RETIRED = TRUE (irreversible), 5) Set Config.EVENT_ID = TARGET_EVENT_ID,
- * 6) Verify v2 acceptance & old-event rejection, 7) Clear EVENT_TRANSITION_PENDING.
+ * 1) Validate TARGET_EVENT_ID, 2) Fail-closed roster readiness & operator reconciliation ack,
+ * 3) Persist EVENT_TRANSITION_PENDING, 4) Persist V1_COMPAT_RETIRED = TRUE (irreversible),
+ * 5) Set Config.EVENT_ID = TARGET_EVENT_ID, 6) Verify v2 acceptance & old-event rejection,
+ * 7) Clear EVENT_TRANSITION_PENDING.
  */
 function transitionToTargetEvent() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1397,6 +1564,23 @@ function transitionToTargetEvent() {
   const targetId = validateV2Field_(props.getProperty('TARGET_EVENT_ID') || '', 'TARGET_EVENT_ID');
   if (targetId === 'DEFAULT') {
     throw new Error('TARGET_EVENT_ID cannot be DEFAULT.');
+  }
+
+  // Step 2: Fail-closed readiness & distribution acknowledgement BEFORE setting pending/retired
+  // (Skip re-gating only if already past Step 4 with V1_COMPAT_RETIRED=TRUE & EVENT_TRANSITION_PENDING=TRUE)
+  const resumingPostRetirement = (
+    String(props.getProperty('EVENT_TRANSITION_PENDING') || '').toUpperCase() === 'TRUE' &&
+    String(props.getProperty('V1_COMPAT_RETIRED') || '').toUpperCase() === 'TRUE'
+  );
+  if (!resumingPostRetirement) {
+    const report = evaluateTransitionReadiness_(ss, cfg, targetId);
+    if (!report.readyToAcknowledge) {
+      throw new Error(`Transition readiness failed: missingIssuance=${report.missingIssuance.length}, failedDispatch=${report.failedDispatch.length}, duplicates=${report.duplicates.length}, invalid=${report.invalidRecords.length}`);
+    }
+    const ack = String(props.getProperty('TRANSITION_RECON_ACK') || '');
+    if (ack !== `${targetId}|${report.digest}`) {
+      throw new Error('Operator distribution reconciliation acknowledgement is missing or invalidated by Roster changes.');
+    }
   }
 
   // Step 3: Persist pending state
@@ -1431,7 +1615,8 @@ function transitionToTargetEvent() {
     throw new Error('Target v2 self-verification failed; EVENT_TRANSITION_PENDING retained.');
   }
 
-  // Step 7: Clear pending state only after successful verification
+  // Step 7: Clear pending state & ack only after successful verification
   props.deleteProperty('EVENT_TRANSITION_PENDING');
+  props.deleteProperty('TRANSITION_RECON_ACK');
   return { ok: true, activeEventId: targetId, v1Retired: true };
 }
