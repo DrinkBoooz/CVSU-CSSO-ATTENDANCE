@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Syntax check Apps Script files
+        run: |
+          node -c Code.js
+          node -c QrEncoder.js
+      - name: Run all unit & integration tests
+        run: |
+          for f in tests/*.js; do
+            echo "Running $f"
+            node "$f"
+          done
+      - name: Install Playwright Chromium & run browser tests
+        run: |
+          npx playwright install --with-deps chromium
+          node tests/browser/scanner.spec.js
