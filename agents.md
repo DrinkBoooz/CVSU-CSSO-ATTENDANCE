@@ -27,8 +27,10 @@ When resolving discrepancies or ambiguous technical specifications, agents must 
 - **Application Workspace:** `c:\Users\BooozMini\OneDrive\CVSU-CSSO-ATTENDANCE`
 - **Google Apps Script Project:**
   - Script ID: `1cUsCC5SrGTkR1hiMXpjuTQPqbEfNhzOAB28_xW5rn7EyCgrODgkXMNc8`
+  - Test/Active Deployment ID: `AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou` (`CSSO Web Attendance Test`)
+  - Web App URL: https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec
   - Runtime: `V8` (`timeZone`: `Asia/Singapore`)
-  - Web App (`Index.html` via `doGet()`): Usher QR Attendance Scanner (`executeAs: USER_DEPLOYING`, `access: ANYONE`)
+  - Web App (`Index.html` via `doGet()`): Usher QR Attendance Scanner (`executeAs: USER_DEPLOYING`, `access: ANYONE`, default `SAMEORIGIN` framing)
 - **Target Google Spreadsheet:**
   - Spreadsheet ID: `16NSuhDLinZQf9fpkrZYBu2ZyPM7Fq3dhutPZ78iDuWA`
   - URL: https://docs.google.com/spreadsheets/d/16NSuhDLinZQf9fpkrZYBu2ZyPM7Fq3dhutPZ78iDuWA/edit?gid=0#gid=0
@@ -72,38 +74,45 @@ When resolving discrepancies or ambiguous technical specifications, agents must 
    - Do not edit `.clasp.json` or remove essential `webapp` settings or OAuth scopes from `appsscript.json`.
 3. **Pre-Push Multi-Phase Verification:**
    - Step 1 (Syntax): `node -c Code.js` must exit with code 0.
-   - Step 2 (Regression Tests): If `tests/` exists, execute `Get-ChildItem tests/*.js | ForEach-Object { node $_.FullName }` to ensure all test suites pass.
-   - Step 3 (Deploy Status): Verify tracked files via `clasp status` (only `Code.js`, `Index.html`, and `appsscript.json` tracked; Markdown/docs excluded via `.claspignore`).
+   - Step 2 (Regression Tests): Execute `$fail=0; Get-ChildItem tests/*.js | ForEach-Object { node $_.FullName; if ($LASTEXITCODE -ne 0) { $fail=1 } }; exit $fail` and ensure all test suites pass.
+   - Step 3 (Deploy Status): Verify tracked files via `clasp status` (only `Code.js`, `Index.html`, and `appsscript.json` tracked; Markdown/docs/tests excluded via `.claspignore`).
 4. **Push & Deploy:**
    - After passing all verification phases, execute `clasp push` in terminal.
-   - Inspect terminal output to verify all files pushed successfully. Never push Markdown or documentation files to Apps Script.
+   - Update the versioned web app deployment when shipping UI/Web App changes:
+     `clasp update-deployment AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou --description "<summary>"`
+   - Run live Chrome E2E verification per `tests/e2e/E2E_RUNBOOK.md` before real events.
 
 ## 5. Google Sheets Schema & Integrity Standards
 1. **Formulas vs. Scripts:**
    - Prefer native, traditional spreadsheet formulas over custom Apps Script functions whenever standard formulas achieve the desired outcome, ensuring cross-platform compatibility.
    - All summary/dashboard KPI formulas must use bounded ranges (e.g., `'Attendance Log'!A2:A5000`) rather than open-ended ranges (`A2:A`) for Microsoft Excel compatibility.
    - **Formula Overlap Guard**: Formulas using wildcards must never overlap; count distinct status strings explicitly to prevent double-counting.
-2. **Canonical Tab Schemas (Observed in `Code.js`):**
-   - **`Config`** (Key-Value pairs in Cols A–B):
-     - `USHER_PIN` (default fallback: `4829`)
-     - `SECRET_SALT` (must be overridden in live sheet; never hardcode production secrets in `Code.js`)
+2. **Canonical Tab Schemas (Observed in `Code.js` and Live Sheet):**
+   - **`Config`** (Key-Value pairs in Cols A–C: `Key`, `Value`, `Notes`):
+     - `USHER_PIN` (required 6+ digit numeric PIN; never hardcode or commit production PINs)
+     - `SECRET_SALT` (required 16+ char secret; never hardcode or commit production secrets)
      - `EVENT_TITLE` (default fallback: `Event QR Attendance Scanner`)
-   - **`Roster` (6 columns A–F):**
-     - **Col A (1):** `Student ID`
+     - `EVENT_ID` (default fallback: `DEFAULT`; scopes duplicate detection and `Verified Attendance`)
+     - `LOCKED_STAGE` (`AUTO`, `Check-In`, `Mid-Event`, or `Check-Out`; enforced server-side and in UI)
+     - `ENFORCE_STAGE_ORDER` (`TRUE` or `FALSE`; if `TRUE`, requires `Check-In` $\to$ `Mid-Event` $\to$ `Check-Out`)
+   - **`Roster` (7 columns A–G):**
+     - **Col A (1):** `Student ID` (formatted as plain text `@`)
      - **Col B (2):** `Email`
      - **Col C (3):** `Full Name`
      - **Col D (4):** `Section`
      - **Col E (5):** `Token` (10-char uppercase SHA-256 prefix of `STUDENTID|SECRET_SALT`)
-     - **Col F (6):** `Pass Status` (`SENT` once emailed)
-   - **`Attendance Log` (7 columns A–G):**
+     - **Col F (6):** `Pass Status` (`SENT` or `ERROR: ...`)
+     - **Col G (7):** `QR Preview` (preserved by script; untouched on writes)
+   - **`Attendance Log` (8 columns A–H):**
      - **Col A (1):** `Timestamp`
      - **Col B (2):** `Stage` (`Check-In`, `Mid-Event`, `Check-Out`)
      - **Col C (3):** `Student ID`
      - **Col D (4):** `Full Name`
      - **Col E (5):** `Section`
-     - **Col F (6):** `Usher Label` (truncated to 40 chars)
-     - **Col G (7):** `Status` (`ACCEPTED`)
-   - **`Verified Attendance` (7 columns A–G):**
+     - **Col F (6):** `Usher Label` (from verified session token; sanitized via `safeCell_()`)
+     - **Col G (7):** `Scan Status` (`ACCEPTED`, `DUPLICATE`, `REJECTED_FORGED`, `REJECTED_MALFORMED`, `REJECTED_NOT_IN_ROSTER`, `REJECTED_STAGE_LOCKED`, `REJECTED_STAGE_ORDER`)
+     - **Col H (8):** `Event ID`
+   - **`Verified Attendance` (8 columns A–H):**
      - **Col A (1):** `Student ID`
      - **Col B (2):** `Full Name`
      - **Col C (3):** `Section`
@@ -111,8 +120,11 @@ When resolving discrepancies or ambiguous technical specifications, agents must 
      - **Col E (5):** `Mid-Event` (time string `HH:mm:ss` or `—`)
      - **Col F (6):** `Check-Out` (time string `HH:mm:ss` or `—`)
      - **Col G (7):** `Qualification` (`QUALIFIED` if all 3 stages present, else `INCOMPLETE`)
+     - **Col H (8):** `Stage Count` (`0`–`3`)
 3. **Security, Concurrency & Data Handling:**
-   - Always guard scan writes (`recordScan`) and summary rebuilds (`rebuildVerifiedAttendance`) with `LockService.getScriptLock()`.
+   - All `recordScan(sessionToken, payloadStr, stage)` calls MUST validate the stateless HMAC-signed `sessionToken` server-side against `SECRET_SALT` and `USHER_PIN`; invalid sessions return `UNAUTHORIZED` without writing any log row.
+   - Always sanitize user-supplied strings with `safeCell_()` before writing to any sheet to prevent formula injection (`=`, `+`, `-`, `@`).
+   - Always guard scan writes (`recordScan`), email sending (`sendPasses_`), and summary rebuilds (`rebuildVerifiedAttendance`) with `LockService.getScriptLock()`. Never rebuild `Verified Attendance` inside `recordScan()`; rely on the 5-minute installable trigger and manual menu rebuild.
    - Use batch reads (`getValues()`) and batch writes (`setValues()`) rather than cell-by-cell loops to avoid Apps Script 6-minute execution timeouts.
    - Normalize Student IDs consistently via `normalizeId_()` when matching `Roster` and `Attendance Log` entries.
 
