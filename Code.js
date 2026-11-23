@@ -1698,7 +1698,7 @@ function onRegistrationFormSubmit(e) {
     let lastSentToken = "";
     let lastSentId = "";
 
-    const autoEmailSetting = String(cfg.AUTO_EMAIL_ON_SUBMIT || "TRUE")
+    const autoEmailSetting = String(cfg.AUTO_EMAIL_ON_SUBMIT || "FALSE")
       .trim()
       .toUpperCase();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -2424,6 +2424,11 @@ function ensureConfigKeys_(ss) {
       "ENFORCE_STAGE_ORDER",
       "FALSE",
       "If TRUE, requires Check-In before Mid-Event and Mid-Event before Check-Out",
+    ],
+    [
+      "AUTO_EMAIL_ON_SUBMIT",
+      "FALSE",
+      "FALSE = zero-email QR Pass Portal mode (unlimited); set TRUE to also email on Form submit",
     ],
   ];
   const toAdd = defaults.filter(([k]) => !existingKeys.has(k));
