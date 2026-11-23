@@ -297,6 +297,10 @@ function onOpen() {
     .addItem("Rebuild Verified Attendance", "rebuildVerifiedAttendance")
     .addSeparator()
     .addItem(
+      "📝 Setup Registration Form & Auto-Email Trigger",
+      "setupRegistrationFormAndTrigger",
+    )
+    .addItem(
       "🧹 Clear All Data Rows (Keep Headers & Config)",
       "clearAllDataRows",
     )
@@ -1458,6 +1462,308 @@ function clearAllDataRows() {
       ui.ButtonSet.OK,
     );
     return { ok: true, cleared };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Creates (or re-links) a Google Form for student self-registration with all fields required
+ * and limited to 1 response per user, links it to this spreadsheet, and installs the
+ * automatic onFormSubmit QR pass email trigger under the currently signed-in account.
+ *
+ * Tip: Run this menu item while signed in as your @cvsu.edu.ph Google Workspace account
+ * (with Editor access to this sheet) so automated QR emails use the 1,500/day Workspace quota,
+ * while the scanner Web App remains deployed under your personal account for ANYONE_ANONYMOUS access.
+ */
+function setupRegistrationFormAndTrigger() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const cfg = getConfig_();
+  requireSecureConfig_(cfg);
+
+  const props = PropertiesService.getScriptProperties();
+  let formId = props.getProperty("REGISTRATION_FORM_ID") || "";
+  let form = null;
+  let createdNew = false;
+
+  if (formId) {
+    try {
+      form = FormApp.openById(formId);
+    } catch (e) {
+      form = null;
+      formId = "";
+    }
+  }
+
+  if (!form) {
+    form = FormApp.create(`${cfg.EVENT_TITLE} - Student Registration`);
+    form.setDescription(
+      `Register for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID}).\n` +
+        "All fields are required. You are limited to 1 response. " +
+        "Your signed QR Attendance Pass will be emailed automatically right after submission.",
+    );
+    form.setCollectEmail(true);
+    form.setLimitOneResponsePerUser(true);
+    form.setAllowResponseEdits(false);
+    try {
+      form.setRequireLogin(true);
+    } catch (e) {
+      // setRequireLogin is Workspace-domain specific; ignore on personal accounts
+    }
+
+    const idValidation = FormApp.createTextValidation()
+      .setHelpText(
+        "Enter a valid Student ID (4-20 letters, numbers, or dashes, e.g. 202300328).",
+      )
+      .requireTextMatchesPattern("^[A-Za-z0-9\\-]{4,20}$")
+      .build();
+
+    form
+      .addTextItem()
+      .setTitle("Student ID")
+      .setHelpText("Example: 202300328")
+      .setRequired(true)
+      .setValidation(idValidation);
+
+    form
+      .addTextItem()
+      .setTitle("Full Name")
+      .setHelpText("Example: Dela Cruz, Juan M.")
+      .setRequired(true);
+
+    form
+      .addTextItem()
+      .setTitle("Section")
+      .setHelpText("Example: BSCS 3-1")
+      .setRequired(true);
+
+    form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
+    formId = form.getId();
+    props.setProperty("REGISTRATION_FORM_ID", formId);
+    createdNew = true;
+  }
+
+  // Install/replace the onFormSubmit trigger under the currently active user
+  const existing = ScriptApp.getProjectTriggers();
+  existing
+    .filter((t) => t.getHandlerFunction() === "onRegistrationFormSubmit")
+    .forEach((t) => ScriptApp.deleteTrigger(t));
+
+  ScriptApp.newTrigger("onRegistrationFormSubmit")
+    .forSpreadsheet(ss)
+    .onFormSubmit()
+    .create();
+
+  const publishedUrl = form.getPublishedUrl();
+  const editUrl = form.getEditUrl();
+  const senderEmail = Session.getActiveUser().getEmail() || "(current account)";
+  const dailyQuota = MailApp.getRemainingDailyQuota();
+
+  // Save Form URL into Config tab for easy reference
+  const configSheet = ss.getSheetByName("Config");
+  if (configSheet) {
+    const rows = configSheet.getDataRange().getValues();
+    let foundRow = -1;
+    for (let i = 1; i < rows.length; i++) {
+      if (String(rows[i][0] || "").trim() === "REGISTRATION_FORM_URL") {
+        foundRow = i + 1;
+        break;
+      }
+    }
+    if (foundRow > 0) {
+      configSheet.getRange(foundRow, 2).setValue(publishedUrl);
+    } else {
+      configSheet.appendRow([
+        "REGISTRATION_FORM_URL",
+        publishedUrl,
+        `Linked Form ID: ${formId}`,
+      ]);
+    }
+  }
+
+  const quotaHint = /@cvsu\.edu\.ph$/i.test(senderEmail)
+    ? "✅ Workspace @cvsu.edu.ph account active (1,500 emails/day tier)."
+    : "ℹ️ Currently running under a personal Gmail account (100 emails/day tier). To use 1,500/day, share this sheet with your @cvsu.edu.ph account and click this menu item while signed in as @cvsu.edu.ph.";
+
+  ui.alert(
+    createdNew
+      ? "Registration Form Created & Linked"
+      : "Auto-Email Trigger Updated",
+    `Auto-QR email trigger is now ACTIVE!\n\n` +
+      `• Trigger Sender: ${senderEmail}\n` +
+      `• Remaining Daily Email Quota: ${dailyQuota}\n` +
+      `• ${quotaHint}\n\n` +
+      `Shareable Form URL (saved in Config):\n${publishedUrl}\n\n` +
+      `Form Edit URL:\n${editUrl}`,
+    ui.ButtonSet.OK,
+  );
+  return { ok: true, formId, publishedUrl, editUrl, senderEmail, dailyQuota };
+}
+
+/**
+ * Installable onFormSubmit trigger: registers the student in Roster (deduped by Student ID)
+ * and immediately emails their signed QR Attendance Pass via GmailApp.
+ */
+function onRegistrationFormSubmit(e) {
+  if (!e || (!e.namedValues && !e.values)) return;
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(15000)) {
+    console.error("onRegistrationFormSubmit: could not acquire ScriptLock.");
+    return;
+  }
+
+  try {
+    const nv = e.namedValues || {};
+    const pick = (keys) => {
+      for (let i = 0; i < keys.length; i++) {
+        if (nv[keys[i]] && nv[keys[i]][0] !== undefined) {
+          return String(nv[keys[i]][0]).trim();
+        }
+      }
+      return "";
+    };
+
+    const cleanEmail = pick(["Email Address", "Email", "CvSU Email"]);
+    const studentId = pick(["Student ID", "Student Number", "ID"])
+      .trim()
+      .toUpperCase();
+    const fullName = pick(["Full Name", "Name"]);
+    const section = pick(["Section", "Course & Section", "Year & Section"]);
+
+    if (!studentId || !cleanEmail) {
+      console.warn(
+        "onRegistrationFormSubmit: missing Student ID or Email Address.",
+      );
+      return;
+    }
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const rosterSheet = ss.getSheetByName("Roster");
+    if (!rosterSheet) {
+      console.error("onRegistrationFormSubmit: Missing Roster tab.");
+      return;
+    }
+
+    const cfg = getConfig_();
+    requireSecureConfig_(cfg);
+
+    const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
+    const issueProtocol =
+      !cfg.V1_COMPAT_RETIRED && cfg.EVENT_ID === compatEventId ? "v1" : "v2";
+    const issueEventId = cfg.EVENT_ID;
+
+    const token =
+      issueProtocol === "v2"
+        ? createV2Signature_(issueEventId, studentId, cfg.SECRET_SALT)
+        : createSignature_(studentId, cfg.SECRET_SALT);
+    const payload =
+      issueProtocol === "v2"
+        ? `v2|${issueEventId}|${studentId}|${token}`
+        : `${studentId}|${token}`;
+
+    // Check if student already exists in Roster (prevent duplicate Roster rows)
+    const normId = normalizeId_(studentId);
+    const lastRow = rosterSheet.getLastRow();
+    let existingRowNum = -1;
+    let prevAttempts = 0;
+    if (lastRow > 1) {
+      const existingData = rosterSheet
+        .getRange(2, 1, lastRow - 1, 14)
+        .getValues();
+      for (let i = 0; i < existingData.length; i++) {
+        if (normalizeId_(existingData[i][0]) === normId) {
+          existingRowNum = i + 2;
+          prevAttempts = Number(existingData[i][9]) || 0;
+          break;
+        }
+      }
+    }
+
+    const attemptNum = prevAttempts + 1;
+    let passStatus = "DISPATCHED";
+    let dispatchedAt = "";
+    let lastError = "";
+    let lastSentToken = "";
+    let lastSentId = "";
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      passStatus = "INVALID_EMAIL";
+      lastError = "Invalid email format";
+    } else if (MailApp.getRemainingDailyQuota() <= 0) {
+      passStatus = "QUOTA_EXCEEDED";
+      lastError = "Daily email quota reached";
+    } else {
+      try {
+        const qrBlob = generateQrPngBlob_(payload, `Pass_${studentId}.png`);
+        const subject = `${cfg.EVENT_TITLE} (${issueEventId}) - Your QR Attendance Pass`;
+        const plainBody = [
+          `${cfg.EVENT_TITLE} (${issueEventId})`,
+          `Participant: ${fullName || "Participant"}`,
+          `Student ID: ${studentId}${section ? " | " + section : ""}`,
+          `Manual Pass Code: ${payload}`,
+          "",
+          "Bring your physical School ID. You must be scanned at Check-In, Mid-Event, and Check-Out to qualify.",
+        ].join("\n");
+
+        const htmlBody = `
+          <div style="font-family: Arial, sans-serif; max-width: 420px; margin: 0 auto; border: 1px solid #d0d7de; border-radius: 10px; padding: 20px; text-align: center;">
+            <h2 style="margin: 0 0 8px 0;">${escapeHtml_(cfg.EVENT_TITLE)}</h2>
+            <p style="margin: 0 0 8px 0; font-size: 12px; color: #555;">Event: ${escapeHtml_(issueEventId)}</p>
+            <p style="margin: 4px 0; font-size: 16px;"><strong>${escapeHtml_(fullName || "Participant")}</strong></p>
+            <p style="margin: 4px 0 14px 0; color: #555;">ID: ${escapeHtml_(studentId)}${section ? " | " + escapeHtml_(section) : ""}</p>
+            <img src="cid:qrpass" alt="QR Pass" style="width: 240px; height: 240px;" />
+            <p style="margin: 10px 0 4px 0; font-size: 13px; color: #111;">
+              Manual Pass Code: <code style="background:#f3f4f6; padding:3px 6px; border-radius:4px;">${escapeHtml_(payload)}</code>
+            </p>
+            <p style="margin-top: 10px; font-size: 12px; color: #444; line-height: 1.4;">
+              Save a screenshot of this pass and bring your physical School ID.<br>
+              You must be scanned at <strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong> to qualify.
+            </p>
+          </div>
+        `;
+
+        GmailApp.sendEmail(cleanEmail, subject, plainBody, {
+          htmlBody,
+          inlineImages: { qrpass: qrBlob },
+        });
+        dispatchedAt = new Date().toISOString();
+        lastSentToken = token;
+        lastSentId = studentId;
+      } catch (mailErr) {
+        passStatus = "MAIL_API_ERROR";
+        lastError = String(
+          mailErr && mailErr.message ? mailErr.message : mailErr,
+        ).substring(0, 120);
+      }
+    }
+
+    const rowValues = [
+      safeCell_(studentId),
+      safeCell_(cleanEmail),
+      safeCell_(fullName),
+      safeCell_(section),
+      token,
+      passStatus,
+      "", // QR Preview preserved
+      lastSentToken,
+      lastSentId,
+      attemptNum,
+      dispatchedAt,
+      lastError,
+      issueProtocol,
+      issueEventId,
+    ];
+
+    if (existingRowNum > 0) {
+      rosterSheet.getRange(existingRowNum, 1, 1, 14).setValues([rowValues]);
+    } else {
+      rosterSheet.appendRow(rowValues);
+    }
+
+    invalidateRosterCache_();
   } finally {
     lock.releaseLock();
   }
