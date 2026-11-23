@@ -155,13 +155,42 @@ function onOpen() {
 }
 
 /**
- * Serves the Usher QR Scanner Web App.
+ * Serves the Usher QR Scanner Web App (fallback UI).
  */
 function doGet() {
   const cfg = getConfig_();
   return HtmlService.createHtmlOutputFromFile('Index')
     .setTitle(cfg.EVENT_TITLE)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/**
+ * JSON API endpoint for the externally hosted HTTPS QR Scanner (docs/index.html).
+ * Accepts text/plain JSON payloads to avoid CORS preflight requests.
+ */
+function doPost(e) {
+  const jsonOut = obj => ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+
+  try {
+    const raw = e && e.postData && e.postData.contents ? e.postData.contents : '';
+    const body = JSON.parse(raw);
+    const action = String(body.action || '').trim();
+
+    if (action === 'login') {
+      return jsonOut(verifyUsherPin(body.pin, body.usherName));
+    }
+    if (action === 'state') {
+      return jsonOut(getScannerState(body.sessionToken));
+    }
+    if (action === 'scan') {
+      return jsonOut(recordScan(body.sessionToken, body.payload, body.stage));
+    }
+    return jsonOut({ ok: false, status: 'ERROR', message: 'Unknown API action.' });
+  } catch (err) {
+    return jsonOut({ ok: false, status: 'ERROR', message: 'Invalid request payload.' });
+  }
 }
 
 /**

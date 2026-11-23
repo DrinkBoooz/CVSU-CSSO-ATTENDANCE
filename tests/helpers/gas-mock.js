@@ -312,6 +312,17 @@ function loadCode(opts = {}) {
     }
   };
 
+  const ContentService = {
+    MimeType: { JSON: 'application/json', TEXT: 'text/plain' },
+    createTextOutput(content) {
+      const out = { _content: String(content || ''), _mime: 'text/plain' };
+      out.setMimeType = m => { out._mime = m; return out; };
+      out.getContent = () => out._content;
+      out.getMimeType = () => out._mime;
+      return out;
+    }
+  };
+
   const context = {
     SpreadsheetApp,
     Utilities,
@@ -321,6 +332,7 @@ function loadCode(opts = {}) {
     MailApp,
     UrlFetchApp,
     HtmlService,
+    ContentService,
     ScriptApp,
     console,
     Date,
