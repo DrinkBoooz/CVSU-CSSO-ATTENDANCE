@@ -1,14 +1,14 @@
-const PLACEHOLDER_SALT = 'REPLACE_WITH_A_STRONG_RANDOM_SECRET_2026';
-const VALID_STAGES = ['Check-In', 'Mid-Event', 'Check-Out'];
+const PLACEHOLDER_SALT = "REPLACE_WITH_A_STRONG_RANDOM_SECRET_2026";
+const VALID_STAGES = ["Check-In", "Mid-Event", "Check-Out"];
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const PIN_FAIL_KEY = 'pin_fail_count';
+const PIN_FAIL_KEY = "pin_fail_count";
 const PIN_FAIL_WINDOW_SEC = 120; // 2 minutes
 const PIN_FAIL_WARN_THRESHOLD = 15;
-const ROSTER_CACHE_KEY = 'roster_map_v1';
+const ROSTER_CACHE_KEY = "roster_map_v1";
 const ROSTER_CACHE_TTL_SEC = 300; // 5 minutes
 const DEDUPE_CACHE_TTL_SEC = 3600; // 1 hour (write-through optimization only; Attendance Log is authoritative)
 const EMAIL_TIME_BUDGET_MS = 270000; // 4.5 minutes
-const APP_BUILD_VERSION = '2026.11.23-phase3';
+const APP_BUILD_VERSION = "2026.11.23-phase3";
 
 /**
  * Reads key-value configuration from ScriptProperties (secrets & transition state)
@@ -16,28 +16,28 @@ const APP_BUILD_VERSION = '2026.11.23-phase3';
  */
 function getConfig_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName('Config');
+  const sheet = ss.getSheetByName("Config");
   const map = {
-    USHER_PIN: '',
-    SECRET_SALT: '',
-    LEGACY_SECRET_SALT: '',
-    V1_COMPAT_EVENT_ID: '',
+    USHER_PIN: "",
+    SECRET_SALT: "",
+    LEGACY_SECRET_SALT: "",
+    V1_COMPAT_EVENT_ID: "",
     V1_COMPAT_RETIRED: false,
-    TARGET_EVENT_ID: '',
+    TARGET_EVENT_ID: "",
     EVENT_TRANSITION_PENDING: false,
-    EVENT_TITLE: 'Event QR Attendance Scanner',
-    EVENT_ID: 'DEFAULT',
-    LOCKED_STAGE: 'AUTO',
-    ENFORCE_STAGE_ORDER: false
+    EVENT_TITLE: "Event QR Attendance Scanner",
+    EVENT_ID: "DEFAULT",
+    LOCKED_STAGE: "AUTO",
+    ENFORCE_STAGE_ORDER: false,
   };
   if (sheet && sheet.getLastRow() > 0) {
     const rows = sheet.getDataRange().getValues();
     rows.forEach(([k, v]) => {
-      const key = String(k || '').trim();
-      const val = String(v === undefined || v === null ? '' : v).trim();
-      if (key && key !== 'Key' && val !== '') {
-        if (key === 'ENFORCE_STAGE_ORDER') {
-          map[key] = val.toUpperCase() === 'TRUE';
+      const key = String(k || "").trim();
+      const val = String(v === undefined || v === null ? "" : v).trim();
+      if (key && key !== "Key" && val !== "") {
+        if (key === "ENFORCE_STAGE_ORDER") {
+          map[key] = val.toUpperCase() === "TRUE";
         } else {
           map[key] = val;
         }
@@ -47,21 +47,24 @@ function getConfig_() {
 
   try {
     const props = PropertiesService.getScriptProperties();
-    const pPin = props.getProperty('USHER_PIN');
-    const pSalt = props.getProperty('SECRET_SALT');
-    const pLegacy = props.getProperty('LEGACY_SECRET_SALT');
-    const pCompatId = props.getProperty('V1_COMPAT_EVENT_ID');
-    const pRetired = props.getProperty('V1_COMPAT_RETIRED');
-    const pTarget = props.getProperty('TARGET_EVENT_ID');
-    const pPending = props.getProperty('EVENT_TRANSITION_PENDING');
+    const pPin = props.getProperty("USHER_PIN");
+    const pSalt = props.getProperty("SECRET_SALT");
+    const pLegacy = props.getProperty("LEGACY_SECRET_SALT");
+    const pCompatId = props.getProperty("V1_COMPAT_EVENT_ID");
+    const pRetired = props.getProperty("V1_COMPAT_RETIRED");
+    const pTarget = props.getProperty("TARGET_EVENT_ID");
+    const pPending = props.getProperty("EVENT_TRANSITION_PENDING");
 
     if (pPin) map.USHER_PIN = String(pPin).trim();
     if (pSalt) map.SECRET_SALT = String(pSalt).trim();
     if (pLegacy) map.LEGACY_SECRET_SALT = String(pLegacy).trim();
     if (pCompatId) map.V1_COMPAT_EVENT_ID = String(pCompatId).trim();
-    if (pRetired) map.V1_COMPAT_RETIRED = String(pRetired).trim().toUpperCase() === 'TRUE';
+    if (pRetired)
+      map.V1_COMPAT_RETIRED = String(pRetired).trim().toUpperCase() === "TRUE";
     if (pTarget) map.TARGET_EVENT_ID = String(pTarget).trim();
-    if (pPending) map.EVENT_TRANSITION_PENDING = String(pPending).trim().toUpperCase() === 'TRUE';
+    if (pPending)
+      map.EVENT_TRANSITION_PENDING =
+        String(pPending).trim().toUpperCase() === "TRUE";
   } catch (e) {
     // ignore ScriptProperties read error in constrained environments
   }
@@ -72,11 +75,19 @@ function getConfig_() {
  * Ensures SECRET_SALT and USHER_PIN meet minimum security requirements.
  */
 function requireSecureConfig_(cfg) {
-  if (!cfg.SECRET_SALT || cfg.SECRET_SALT === PLACEHOLDER_SALT || cfg.SECRET_SALT.length < 16) {
-    throw new Error('SECRET_SALT is missing or using the placeholder value in Config.');
+  if (
+    !cfg.SECRET_SALT ||
+    cfg.SECRET_SALT === PLACEHOLDER_SALT ||
+    cfg.SECRET_SALT.length < 16
+  ) {
+    throw new Error(
+      "SECRET_SALT is missing or using the placeholder value in Config.",
+    );
   }
-  if (!/^\d{6,}$/.test(String(cfg.USHER_PIN || ''))) {
-    throw new Error('USHER_PIN must be configured as a 6+ digit numeric PIN in Config.');
+  if (!/^\d{6,}$/.test(String(cfg.USHER_PIN || ""))) {
+    throw new Error(
+      "USHER_PIN must be configured as a 6+ digit numeric PIN in Config.",
+    );
   }
 }
 
@@ -84,7 +95,7 @@ function requireSecureConfig_(cfg) {
  * Prevents spreadsheet formula injection when writing user-controlled strings.
  */
 function safeCell_(val) {
-  if (typeof val === 'string' && /^[=+\-@]/.test(val)) {
+  if (typeof val === "string" && /^[=+\-@]/.test(val)) {
     return "'" + val;
   }
   return val;
@@ -94,12 +105,12 @@ function safeCell_(val) {
  * Escapes HTML special characters for email templates.
  */
 function escapeHtml_(str) {
-  return String(str || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 /**
@@ -108,11 +119,11 @@ function escapeHtml_(str) {
 function sha256HexPrefix_(input, length) {
   const raw = Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
-    String(input)
+    String(input),
   );
   return raw
-    .map(b => ('0' + (b & 0xff).toString(16)).slice(-2))
-    .join('')
+    .map((b) => ("0" + (b & 0xff).toString(16)).slice(-2))
+    .join("")
     .substring(0, length)
     .toUpperCase();
 }
@@ -120,15 +131,15 @@ function sha256HexPrefix_(input, length) {
 function hmacSha256Hex_(msg, key, length) {
   const raw = Utilities.computeHmacSha256Signature(String(msg), String(key));
   const hex = raw
-    .map(b => ('0' + (b & 0xff).toString(16)).slice(-2))
-    .join('')
+    .map((b) => ("0" + (b & 0xff).toString(16)).slice(-2))
+    .join("")
     .toUpperCase();
   return length ? hex.substring(0, length) : hex;
 }
 
 function constantTimeEqual_(a, b) {
-  const s1 = String(a || '');
-  const s2 = String(b || '');
+  const s1 = String(a || "");
+  const s2 = String(b || "");
   if (s1.length !== s2.length) return false;
   let diff = 0;
   for (let i = 0; i < s1.length; i++) {
@@ -142,7 +153,10 @@ function constantTimeEqual_(a, b) {
  * Never replaced with HMAC-SHA256.
  */
 function createSignature_(studentId, salt) {
-  return sha256HexPrefix_(`${String(studentId).trim().toUpperCase()}|${salt}`, 10);
+  return sha256HexPrefix_(
+    `${String(studentId).trim().toUpperCase()}|${salt}`,
+    10,
+  );
 }
 
 function verifyLegacyV1Signature_(rawId, scannedToken, cfg) {
@@ -156,35 +170,49 @@ function verifyLegacyV1Signature_(rawId, scannedToken, cfg) {
 }
 
 function validateV2Field_(val, label) {
-  const s = String(val === undefined || val === null ? '' : val);
+  const s = String(val === undefined || val === null ? "" : val);
   if (!s) throw new Error(`${label} cannot be empty.`);
-  if (s.includes('|')) throw new Error(`${label} cannot contain the "|" delimiter.`);
+  if (s.includes("|"))
+    throw new Error(`${label} cannot contain the "|" delimiter.`);
   if (s !== s.trim() || /[\x00-\x1f\x7f]/.test(s)) {
-    throw new Error(`${label} cannot contain leading/trailing whitespace or control characters.`);
+    throw new Error(
+      `${label} cannot contain leading/trailing whitespace or control characters.`,
+    );
   }
   return s;
 }
 
 function createV2Signature_(eventId, studentId, key) {
-  const ev = validateV2Field_(eventId, 'EVENT_ID');
-  const sid = validateV2Field_(studentId, 'STUDENT_ID');
+  const ev = validateV2Field_(eventId, "EVENT_ID");
+  const sid = validateV2Field_(studentId, "STUDENT_ID");
   return hmacSha256Hex_(`v2|${ev}|${sid}`, key, 64);
 }
 
 function verifyV2Signature_(eventId, studentId, scannedHmac, cfg) {
   if (!/^[A-F0-9]{32,64}$/.test(scannedHmac)) return false;
   const prefix = `v2|${eventId}|${studentId}`;
-  const expectedCur = hmacSha256Hex_(prefix, cfg.SECRET_SALT, scannedHmac.length);
+  const expectedCur = hmacSha256Hex_(
+    prefix,
+    cfg.SECRET_SALT,
+    scannedHmac.length,
+  );
   if (constantTimeEqual_(scannedHmac, expectedCur)) return true;
   if (cfg.LEGACY_SECRET_SALT) {
-    const expectedLeg = hmacSha256Hex_(prefix, cfg.LEGACY_SECRET_SALT, scannedHmac.length);
+    const expectedLeg = hmacSha256Hex_(
+      prefix,
+      cfg.LEGACY_SECRET_SALT,
+      scannedHmac.length,
+    );
     if (constantTimeEqual_(scannedHmac, expectedLeg)) return true;
   }
   return false;
 }
 
 function normalizeId_(id) {
-  return String(id || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return String(id || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
 }
 
 /**
@@ -192,10 +220,18 @@ function normalizeId_(id) {
  * Rotating USHER_PIN immediately invalidates all previously issued tokens.
  */
 function createSessionToken_(usherLabel, cfg) {
-  const cleanUsher = String(usherLabel || 'Usher').replace(/\|/g, ' ').trim().substring(0, 40) || 'Usher';
+  const cleanUsher =
+    String(usherLabel || "Usher")
+      .replace(/\|/g, " ")
+      .trim()
+      .substring(0, 40) || "Usher";
   const expMs = Date.now() + SESSION_TTL_MS;
   const payloadB64 = Utilities.base64EncodeWebSafe(`${cleanUsher}|${expMs}`);
-  const sig = hmacSha256Hex_(payloadB64, `${cfg.SECRET_SALT}|${cfg.USHER_PIN}`, 32);
+  const sig = hmacSha256Hex_(
+    payloadB64,
+    `${cfg.SECRET_SALT}|${cfg.USHER_PIN}`,
+    32,
+  );
   return { token: `${payloadB64}.${sig}`, usherLabel: cleanUsher, expMs };
 }
 
@@ -208,23 +244,31 @@ function verifySessionToken_(sessionToken, cfg) {
   } catch (e) {
     return { ok: false, message: e.message };
   }
-  const parts = String(sessionToken || '').trim().split('.');
+  const parts = String(sessionToken || "")
+    .trim()
+    .split(".");
   if (parts.length !== 2) return { ok: false };
   const [payloadB64, sig] = parts;
   if (!payloadB64 || !sig) return { ok: false };
 
-  const expectedSig = hmacSha256Hex_(payloadB64, `${cfg.SECRET_SALT}|${cfg.USHER_PIN}`, 32);
+  const expectedSig = hmacSha256Hex_(
+    payloadB64,
+    `${cfg.SECRET_SALT}|${cfg.USHER_PIN}`,
+    32,
+  );
   if (!constantTimeEqual_(sig, expectedSig)) return { ok: false };
 
-  let decoded = '';
+  let decoded = "";
   try {
-    decoded = Utilities.newBlob(Utilities.base64DecodeWebSafe(payloadB64)).getDataAsString();
+    decoded = Utilities.newBlob(
+      Utilities.base64DecodeWebSafe(payloadB64),
+    ).getDataAsString();
   } catch (e) {
     return { ok: false };
   }
-  const sepIdx = decoded.lastIndexOf('|');
+  const sepIdx = decoded.lastIndexOf("|");
   if (sepIdx < 0) return { ok: false };
-  const usherLabel = decoded.substring(0, sepIdx) || 'Usher';
+  const usherLabel = decoded.substring(0, sepIdx) || "Usher";
   const expMs = Number(decoded.substring(sepIdx + 1));
   if (!expMs || Date.now() > expMs) return { ok: false };
 
@@ -236,13 +280,22 @@ function verifySessionToken_(sessionToken, cfg) {
  */
 function onOpen() {
   SpreadsheetApp.getUi()
-    .createMenu('Attendance Scanner')
-    .addItem('🚀 Implement New Features / Apply All Upgrades', 'applyAllSystemUpgrades')
+    .createMenu("Attendance Scanner")
+    .addItem(
+      "🚀 Implement New Features / Apply All Upgrades",
+      "applyAllSystemUpgrades",
+    )
     .addSeparator()
-    .addItem('Generate & Email QR Passes (All Pending)', 'generateAndEmailQRPasses')
-    .addItem('Send QR Pass to Selected Row(s)', 'sendQRPassesToSelectedRows')
-    .addItem('Issue Target-Event v2 Passes (Pending)', 'issueTargetEventV2Passes')
-    .addItem('Rebuild Verified Attendance', 'rebuildVerifiedAttendance')
+    .addItem(
+      "Generate & Email QR Passes (All Pending)",
+      "generateAndEmailQRPasses",
+    )
+    .addItem("Send QR Pass to Selected Row(s)", "sendQRPassesToSelectedRows")
+    .addItem(
+      "Issue Target-Event v2 Passes (Pending)",
+      "issueTargetEventV2Passes",
+    )
+    .addItem("Rebuild Verified Attendance", "rebuildVerifiedAttendance")
     .addToUi();
 }
 
@@ -251,9 +304,9 @@ function onOpen() {
  */
 function doGet() {
   const cfg = getConfig_();
-  return HtmlService.createHtmlOutputFromFile('Index')
+  return HtmlService.createHtmlOutputFromFile("Index")
     .setTitle(cfg.EVENT_TITLE)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    .addMetaTag("viewport", "width=device-width, initial-scale=1");
 }
 
 /**
@@ -262,37 +315,59 @@ function doGet() {
  */
 function doPost(e) {
   const requestId = Utilities.getUuid().substring(0, 8);
-  const jsonOut = obj => ContentService
-    .createTextOutput(JSON.stringify(Object.assign({ requestId }, obj)))
-    .setMimeType(ContentService.MimeType.JSON);
+  const jsonOut = (obj) =>
+    ContentService.createTextOutput(
+      JSON.stringify(Object.assign({ requestId }, obj)),
+    ).setMimeType(ContentService.MimeType.JSON);
 
   let body;
   try {
-    const raw = e && e.postData && e.postData.contents ? e.postData.contents : '';
+    const raw =
+      e && e.postData && e.postData.contents ? e.postData.contents : "";
     body = JSON.parse(raw);
   } catch (parseErr) {
-    return jsonOut({ ok: false, status: 'INVALID_JSON', message: 'Invalid JSON request payload.' });
+    return jsonOut({
+      ok: false,
+      status: "INVALID_JSON",
+      message: "Invalid JSON request payload.",
+    });
   }
 
   try {
-    const action = String(body && body.action ? body.action : '').trim();
-    if (action === 'ping') {
+    const action = String(body && body.action ? body.action : "").trim();
+    if (action === "ping") {
       const cfg = getConfig_();
-      return jsonOut({ ok: true, status: 'OK', version: APP_BUILD_VERSION, eventId: cfg.EVENT_ID });
+      return jsonOut({
+        ok: true,
+        status: "OK",
+        version: APP_BUILD_VERSION,
+        eventId: cfg.EVENT_ID,
+      });
     }
-    if (action === 'login') {
+    if (action === "login") {
       return jsonOut(verifyUsherPin(body.pin, body.usherName));
     }
-    if (action === 'state') {
+    if (action === "state") {
       return jsonOut(getScannerState(body.sessionToken));
     }
-    if (action === 'scan') {
+    if (action === "scan") {
       return jsonOut(recordScan(body.sessionToken, body.payload, body.stage));
     }
-    return jsonOut({ ok: false, status: 'ERROR', message: 'Unknown API action.' });
+    return jsonOut({
+      ok: false,
+      status: "ERROR",
+      message: "Unknown API action.",
+    });
   } catch (err) {
-    console.error(`doPost [${requestId}] internal error:`, err && err.stack ? err.stack : err);
-    return jsonOut({ ok: false, status: 'INTERNAL_ERROR', message: `Internal server error (ref: ${requestId}).` });
+    console.error(
+      `doPost [${requestId}] internal error:`,
+      err && err.stack ? err.stack : err,
+    );
+    return jsonOut({
+      ok: false,
+      status: "INTERNAL_ERROR",
+      message: `Internal server error (ref: ${requestId}).`,
+    });
   }
 }
 
@@ -306,10 +381,13 @@ function verifyUsherPin(pinInput, usherName) {
   try {
     requireSecureConfig_(cfg);
   } catch (e) {
-    return { ok: false, message: 'Scanner is not configured securely: ' + e.message };
+    return {
+      ok: false,
+      message: "Scanner is not configured securely: " + e.message,
+    };
   }
 
-  const cleanPin = String(pinInput || '').trim();
+  const cleanPin = String(pinInput || "").trim();
   if (cleanPin && constantTimeEqual_(cleanPin, cfg.USHER_PIN)) {
     const sess = createSessionToken_(usherName, cfg);
     return {
@@ -318,18 +396,20 @@ function verifyUsherPin(pinInput, usherName) {
       usherLabel: sess.usherLabel,
       eventTitle: cfg.EVENT_TITLE,
       eventId: cfg.EVENT_ID,
-      lockedStage: cfg.LOCKED_STAGE
+      lockedStage: cfg.LOCKED_STAGE,
     };
   }
 
   const cache = CacheService.getScriptCache();
-  const failCount = Number(cache.get(PIN_FAIL_KEY) || '0') + 1;
+  const failCount = Number(cache.get(PIN_FAIL_KEY) || "0") + 1;
   cache.put(PIN_FAIL_KEY, String(failCount), PIN_FAIL_WINDOW_SEC);
   if (failCount >= PIN_FAIL_WARN_THRESHOLD) {
-    console.warn(`High failed PIN attempt volume (${failCount} in ${PIN_FAIL_WINDOW_SEC}s window).`);
+    console.warn(
+      `High failed PIN attempt volume (${failCount} in ${PIN_FAIL_WINDOW_SEC}s window).`,
+    );
   }
   Utilities.sleep(1500);
-  return { ok: false, message: 'Incorrect Usher PIN.' };
+  return { ok: false, message: "Incorrect Usher PIN." };
 }
 
 /**
@@ -339,14 +419,18 @@ function getScannerState(sessionToken) {
   const cfg = getConfig_();
   const sess = verifySessionToken_(sessionToken, cfg);
   if (!sess.ok) {
-    return { ok: false, status: 'UNAUTHORIZED', message: 'Session expired or invalid. Please log in again.' };
+    return {
+      ok: false,
+      status: "UNAUTHORIZED",
+      message: "Session expired or invalid. Please log in again.",
+    };
   }
   return {
     ok: true,
     usherLabel: sess.usherLabel,
     eventTitle: cfg.EVENT_TITLE,
     eventId: cfg.EVENT_ID,
-    lockedStage: cfg.LOCKED_STAGE
+    lockedStage: cfg.LOCKED_STAGE,
   };
 }
 
@@ -367,7 +451,7 @@ function getRosterMap_(ss, forceRefresh) {
     }
   }
 
-  const rosterSheet = ss.getSheetByName('Roster');
+  const rosterSheet = ss.getSheetByName("Roster");
   if (!rosterSheet) return null;
 
   const map = {};
@@ -375,13 +459,15 @@ function getRosterMap_(ss, forceRefresh) {
   if (lastRow > 1) {
     const rows = rosterSheet.getRange(2, 1, lastRow - 1, 4).getValues();
     for (let i = 0; i < rows.length; i++) {
-      const rId = String(rows[i][0] || '').trim().toUpperCase();
+      const rId = String(rows[i][0] || "")
+        .trim()
+        .toUpperCase();
       const normId = normalizeId_(rId);
       if (!normId || map[normId]) continue; // preserve first entry on duplicate normalized ID
       map[normId] = {
         studentId: rId,
-        fullName: String(rows[i][2] || '').trim(),
-        section: String(rows[i][3] || '').trim()
+        fullName: String(rows[i][2] || "").trim(),
+        section: String(rows[i][3] || "").trim(),
       };
     }
   }
@@ -411,7 +497,7 @@ function invalidateRosterCache_() {
 function onSheetEdit(e) {
   try {
     const sheet = e && e.range && e.range.getSheet ? e.range.getSheet() : null;
-    if (sheet && sheet.getName() === 'Roster') {
+    if (sheet && sheet.getName() === "Roster") {
       invalidateRosterCache_();
     }
   } catch (err) {
@@ -430,7 +516,9 @@ function dedupeCacheKey_(eventId, normId) {
 
 function getCachedSeenStages_(eventId, normId) {
   try {
-    const raw = CacheService.getScriptCache().get(dedupeCacheKey_(eventId, normId));
+    const raw = CacheService.getScriptCache().get(
+      dedupeCacheKey_(eventId, normId),
+    );
     if (raw) return JSON.parse(raw);
   } catch (e) {}
   return null;
@@ -441,7 +529,7 @@ function putCachedSeenStages_(eventId, normId, seenStages) {
     CacheService.getScriptCache().put(
       dedupeCacheKey_(eventId, normId),
       JSON.stringify(seenStages),
-      DEDUPE_CACHE_TTL_SEC
+      DEDUPE_CACHE_TTL_SEC,
     );
   } catch (e) {}
 }
@@ -456,80 +544,116 @@ function recordScan(sessionToken, payloadStr, stage) {
   const cfg = getConfig_();
   const sess = verifySessionToken_(sessionToken, cfg);
   if (!sess.ok) {
-    return { status: 'UNAUTHORIZED', message: 'Session expired or invalid. Please log in again.' };
+    return {
+      status: "UNAUTHORIZED",
+      message: "Session expired or invalid. Please log in again.",
+    };
   }
 
-  const cleanStage = String(stage || '').trim();
+  const cleanStage = String(stage || "").trim();
   if (!VALID_STAGES.includes(cleanStage)) {
-    return { status: 'ERROR', message: 'Invalid checkpoint stage selected.' };
+    return { status: "ERROR", message: "Invalid checkpoint stage selected." };
   }
 
   // Pre-load cached Roster outside LockService to minimize lock hold time
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   let rosterMap = getRosterMap_(ss, false);
   if (!rosterMap) {
-    return { status: 'ERROR', message: 'Missing Roster sheet.' };
+    return { status: "ERROR", message: "Missing Roster sheet." };
   }
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) {
-    return { status: 'ERROR', message: 'Scanner busy. Scan again in 1 second.' };
+    return {
+      status: "ERROR",
+      message: "Scanner busy. Scan again in 1 second.",
+    };
   }
 
   try {
-    const logSheet = ss.getSheetByName('Attendance Log');
+    const logSheet = ss.getSheetByName("Attendance Log");
     if (!logSheet) {
-      return { status: 'ERROR', message: 'Missing Attendance Log sheet.' };
+      return { status: "ERROR", message: "Missing Attendance Log sheet." };
     }
 
     const now = new Date();
     const logAttempt = (studentId, fullName, section, status) => {
       const nextRow = logSheet.getLastRow() + 1;
-      logSheet.getRange(nextRow, 1, 1, 8).setValues([[
-        now,
-        cleanStage,
-        safeCell_(studentId || ''),
-        safeCell_(fullName || ''),
-        safeCell_(section || ''),
-        safeCell_(sess.usherLabel),
-        status,
-        safeCell_(cfg.EVENT_ID)
-      ]]);
+      logSheet
+        .getRange(nextRow, 1, 1, 8)
+        .setValues([
+          [
+            now,
+            cleanStage,
+            safeCell_(studentId || ""),
+            safeCell_(fullName || ""),
+            safeCell_(section || ""),
+            safeCell_(sess.usherLabel),
+            status,
+            safeCell_(cfg.EVENT_ID),
+          ],
+        ]);
     };
 
     // Enforce LOCKED_STAGE
-    if (cfg.LOCKED_STAGE && cfg.LOCKED_STAGE !== 'AUTO' && cleanStage !== cfg.LOCKED_STAGE) {
-      const rawHint = String(payloadStr || '').trim().split('|')[0].trim().toUpperCase();
-      logAttempt(rawHint, '', '', 'REJECTED_STAGE_LOCKED');
+    if (
+      cfg.LOCKED_STAGE &&
+      cfg.LOCKED_STAGE !== "AUTO" &&
+      cleanStage !== cfg.LOCKED_STAGE
+    ) {
+      const hintParts = String(payloadStr || "")
+        .trim()
+        .split("|");
+      const rawHint = (
+        hintParts[0] === "v2" && hintParts.length >= 3
+          ? hintParts[2]
+          : hintParts[0]
+      )
+        .trim()
+        .toUpperCase();
+      logAttempt(rawHint, "", "", "REJECTED_STAGE_LOCKED");
       return {
-        status: 'REJECTED_STAGE_LOCKED',
-        message: `Scanner is locked to ${cfg.LOCKED_STAGE}.`
+        status: "REJECTED_STAGE_LOCKED",
+        message: `Scanner is locked to ${cfg.LOCKED_STAGE}.`,
       };
     }
 
-    const rawPayload = String(payloadStr || '');
-    const parts = rawPayload.split('|');
+    const rawPayload = String(payloadStr || "");
+    const parts = rawPayload.split("|");
 
-    let rawId = '';
-    let normId = '';
+    let rawId = "";
+    let normId = "";
 
-    if (parts[0] === 'v2') {
+    if (parts[0] === "v2") {
       // Canonical v2|EVENT_ID|STUDENT_ID|HMAC — strict 4 segments, no silent field modification
       if (parts.length !== 4) {
-        logAttempt(rawPayload.trim().substring(0, 40), '', '', 'REJECTED_MALFORMED');
-        return { status: 'REJECTED_MALFORMED', message: 'Malformed v2 QR payload.' };
+        logAttempt(
+          rawPayload.trim().substring(0, 40),
+          "",
+          "",
+          "REJECTED_MALFORMED",
+        );
+        return {
+          status: "REJECTED_MALFORMED",
+          message: "Malformed v2 QR payload.",
+        };
       }
       const [, evId, sid, hmac] = parts;
       try {
-        validateV2Field_(evId, 'EVENT_ID');
-        validateV2Field_(sid, 'STUDENT_ID');
+        validateV2Field_(evId, "EVENT_ID");
+        validateV2Field_(sid, "STUDENT_ID");
       } catch (fieldErr) {
-        logAttempt(rawPayload.trim().substring(0, 40), '', '', 'REJECTED_MALFORMED');
-        return { status: 'REJECTED_MALFORMED', message: fieldErr.message };
+        logAttempt(
+          rawPayload.trim().substring(0, 40),
+          "",
+          "",
+          "REJECTED_MALFORMED",
+        );
+        return { status: "REJECTED_MALFORMED", message: fieldErr.message };
       }
       if (!hmac || hmac !== hmac.trim()) {
-        logAttempt(sid, '', '', 'REJECTED_MALFORMED');
-        return { status: 'REJECTED_MALFORMED', message: 'Malformed v2 HMAC.' };
+        logAttempt(sid, "", "", "REJECTED_MALFORMED");
+        return { status: "REJECTED_MALFORMED", message: "Malformed v2 HMAC." };
       }
 
       rawId = sid;
@@ -537,19 +661,33 @@ function recordScan(sessionToken, payloadStr, stage) {
 
       // Strict EVENT_ID validation before accepting either SECRET_SALT or LEGACY_SECRET_SALT
       if (evId !== cfg.EVENT_ID) {
-        logAttempt(rawId, '', '', 'REJECTED_WRONG_EVENT');
-        return { status: 'REJECTED_WRONG_EVENT', message: `Pass belongs to event "${evId}", not "${cfg.EVENT_ID}".` };
+        logAttempt(rawId, "", "", "REJECTED_WRONG_EVENT");
+        return {
+          status: "REJECTED_WRONG_EVENT",
+          message: `Pass belongs to event "${evId}", not "${cfg.EVENT_ID}".`,
+        };
       }
 
       if (!verifyV2Signature_(evId, sid, hmac, cfg)) {
-        logAttempt(rawId, '', '', 'REJECTED_FORGED');
-        return { status: 'REJECTED_FORGED', message: 'Forged or tampered v2 QR token.' };
+        logAttempt(rawId, "", "", "REJECTED_FORGED");
+        return {
+          status: "REJECTED_FORGED",
+          message: "Forged or tampered v2 QR token.",
+        };
       }
     } else {
       // Legacy v1: STUDENTID|10-HEX
       if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
-        logAttempt(rawPayload.trim().substring(0, 40), '', '', 'REJECTED_MALFORMED');
-        return { status: 'REJECTED_MALFORMED', message: 'Malformed QR payload.' };
+        logAttempt(
+          rawPayload.trim().substring(0, 40),
+          "",
+          "",
+          "REJECTED_MALFORMED",
+        );
+        return {
+          status: "REJECTED_MALFORMED",
+          message: "Malformed QR payload.",
+        };
       }
 
       rawId = parts[0].trim().toUpperCase();
@@ -557,17 +695,26 @@ function recordScan(sessionToken, payloadStr, stage) {
       normId = normalizeId_(rawId);
 
       if (cfg.V1_COMPAT_RETIRED) {
-        logAttempt(rawId, '', '', 'REJECTED_V1_RETIRED');
-        return { status: 'REJECTED_V1_RETIRED', message: 'Legacy v1 passes have been permanently retired.' };
+        logAttempt(rawId, "", "", "REJECTED_V1_RETIRED");
+        return {
+          status: "REJECTED_V1_RETIRED",
+          message: "Legacy v1 passes have been permanently retired.",
+        };
       }
-      const compatEventId = cfg.V1_COMPAT_EVENT_ID || 'DEFAULT';
+      const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
       if (cfg.EVENT_ID !== compatEventId) {
-        logAttempt(rawId, '', '', 'REJECTED_WRONG_EVENT');
-        return { status: 'REJECTED_WRONG_EVENT', message: `Legacy v1 passes are only valid for ${compatEventId}.` };
+        logAttempt(rawId, "", "", "REJECTED_WRONG_EVENT");
+        return {
+          status: "REJECTED_WRONG_EVENT",
+          message: `Legacy v1 passes are only valid for ${compatEventId}.`,
+        };
       }
       if (!verifyLegacyV1Signature_(rawId, scannedToken, cfg)) {
-        logAttempt(rawId, '', '', 'REJECTED_FORGED');
-        return { status: 'REJECTED_FORGED', message: 'Forged or tampered QR token.' };
+        logAttempt(rawId, "", "", "REJECTED_FORGED");
+        return {
+          status: "REJECTED_FORGED",
+          message: "Forged or tampered QR token.",
+        };
       }
     }
 
@@ -577,8 +724,11 @@ function recordScan(sessionToken, payloadStr, stage) {
       studentRecord = rosterMap ? rosterMap[normId] : null;
     }
     if (!studentRecord) {
-      logAttempt(rawId, '', '', 'REJECTED_NOT_IN_ROSTER');
-      return { status: 'REJECTED_NOT_IN_ROSTER', message: `Student ID ${rawId} not found in Roster.` };
+      logAttempt(rawId, "", "", "REJECTED_NOT_IN_ROSTER");
+      return {
+        status: "REJECTED_NOT_IN_ROSTER",
+        message: `Student ID ${rawId} not found in Roster.`,
+      };
     }
 
     // Write-through dedupe cache; on miss/eviction fall back to authoritative Attendance Log
@@ -589,11 +739,15 @@ function recordScan(sessionToken, payloadStr, stage) {
       if (lastLogRow > 1) {
         const logRows = logSheet.getRange(2, 2, lastLogRow - 1, 7).getValues();
         for (let r = 0; r < logRows.length; r++) {
-          const loggedStage = String(logRows[r][0] || '').trim();
+          const loggedStage = String(logRows[r][0] || "").trim();
           const loggedNormId = normalizeId_(logRows[r][1]);
-          const loggedStatus = String(logRows[r][5] || '').trim();
-          const loggedEventId = String(logRows[r][6] || '').trim() || 'DEFAULT';
-          if (loggedStatus === 'ACCEPTED' && loggedNormId === normId && loggedEventId === cfg.EVENT_ID) {
+          const loggedStatus = String(logRows[r][5] || "").trim();
+          const loggedEventId = String(logRows[r][6] || "").trim() || "DEFAULT";
+          if (
+            loggedStatus === "ACCEPTED" &&
+            loggedNormId === normId &&
+            loggedEventId === cfg.EVENT_ID
+          ) {
             seenStages[loggedStage] = true;
           }
         }
@@ -602,49 +756,69 @@ function recordScan(sessionToken, payloadStr, stage) {
     }
 
     if (seenStages[cleanStage]) {
-      logAttempt(studentRecord.studentId, studentRecord.fullName, studentRecord.section, 'DUPLICATE');
+      logAttempt(
+        studentRecord.studentId,
+        studentRecord.fullName,
+        studentRecord.section,
+        "DUPLICATE",
+      );
       return {
-        status: 'DUPLICATE',
+        status: "DUPLICATE",
         fullName: studentRecord.fullName,
         section: studentRecord.section,
         studentId: studentRecord.studentId,
-        message: `Already scanned for ${cleanStage}.`
+        message: `Already scanned for ${cleanStage}.`,
       };
     }
 
     if (cfg.ENFORCE_STAGE_ORDER) {
-      if (cleanStage === 'Mid-Event' && !seenStages['Check-In']) {
-        logAttempt(studentRecord.studentId, studentRecord.fullName, studentRecord.section, 'REJECTED_STAGE_ORDER');
+      if (cleanStage === "Mid-Event" && !seenStages["Check-In"]) {
+        logAttempt(
+          studentRecord.studentId,
+          studentRecord.fullName,
+          studentRecord.section,
+          "REJECTED_STAGE_ORDER",
+        );
         return {
-          status: 'REJECTED_STAGE_ORDER',
+          status: "REJECTED_STAGE_ORDER",
           fullName: studentRecord.fullName,
           studentId: studentRecord.studentId,
-          message: 'Must complete Check-In before Mid-Event.'
+          message: "Must complete Check-In before Mid-Event.",
         };
       }
-      if (cleanStage === 'Check-Out' && !seenStages['Mid-Event']) {
-        logAttempt(studentRecord.studentId, studentRecord.fullName, studentRecord.section, 'REJECTED_STAGE_ORDER');
+      if (cleanStage === "Check-Out" && !seenStages["Mid-Event"]) {
+        logAttempt(
+          studentRecord.studentId,
+          studentRecord.fullName,
+          studentRecord.section,
+          "REJECTED_STAGE_ORDER",
+        );
         return {
-          status: 'REJECTED_STAGE_ORDER',
+          status: "REJECTED_STAGE_ORDER",
           fullName: studentRecord.fullName,
           studentId: studentRecord.studentId,
-          message: 'Must complete Mid-Event before Check-Out.'
+          message: "Must complete Mid-Event before Check-Out.",
         };
       }
     }
 
-    logAttempt(studentRecord.studentId, studentRecord.fullName, studentRecord.section, 'ACCEPTED');
+    logAttempt(
+      studentRecord.studentId,
+      studentRecord.fullName,
+      studentRecord.section,
+      "ACCEPTED",
+    );
     seenStages[cleanStage] = true;
     putCachedSeenStages_(cfg.EVENT_ID, normId, seenStages);
 
     return {
-      status: 'OK',
+      status: "OK",
       fullName: studentRecord.fullName,
       section: studentRecord.section,
       studentId: studentRecord.studentId,
       stage: cleanStage,
       eventId: cfg.EVENT_ID,
-      time: Utilities.formatDate(now, Session.getScriptTimeZone(), 'HH:mm:ss')
+      time: Utilities.formatDate(now, Session.getScriptTimeZone(), "HH:mm:ss"),
     };
   } finally {
     lock.releaseLock();
@@ -655,37 +829,39 @@ function recordScan(sessionToken, payloadStr, stage) {
  * Generates and emails signed QR passes for all pending Roster rows (Active event mode).
  */
 function generateAndEmailQRPasses() {
-  return sendPasses_(null, true, { mode: 'ACTIVE' });
+  return sendPasses_(null, true, { mode: "ACTIVE" });
 }
 
 /**
  * Generates and emails signed QR passes only for the currently selected Roster row(s).
  */
 function sendQRPassesToSelectedRows() {
-  return sendSelectedRowsWithMode_('ACTIVE');
+  return sendSelectedRowsWithMode_("ACTIVE");
 }
 
 /**
  * Pre-issues v2 passes for persisted TARGET_EVENT_ID without changing active Config.EVENT_ID.
  */
 function issueTargetEventV2Passes() {
-  return sendPasses_(null, true, { mode: 'TARGET' });
+  return sendPasses_(null, true, { mode: "TARGET" });
 }
 
 function issueTargetEventV2PassesSelectedRows() {
-  return sendSelectedRowsWithMode_('TARGET');
+  return sendSelectedRowsWithMode_("TARGET");
 }
 
 function sendSelectedRowsWithMode_(mode) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const activeSheet = ss.getActiveSheet();
-  if (!activeSheet || activeSheet.getName() !== 'Roster') {
-    SpreadsheetApp.getUi().alert('Please select one or more student rows in the "Roster" tab first.');
+  if (!activeSheet || activeSheet.getName() !== "Roster") {
+    SpreadsheetApp.getUi().alert(
+      'Please select one or more student rows in the "Roster" tab first.',
+    );
     return;
   }
   const range = activeSheet.getActiveRange();
   if (!range) {
-    SpreadsheetApp.getUi().alert('No cells selected in Roster.');
+    SpreadsheetApp.getUi().alert("No cells selected in Roster.");
     return;
   }
   const startRow = range.getRow();
@@ -695,10 +871,12 @@ function sendSelectedRowsWithMode_(mode) {
     if (r >= 2) indices.push(r - 1);
   }
   if (indices.length === 0) {
-    SpreadsheetApp.getUi().alert('Select student rows (row 2 or below), not the header row.');
+    SpreadsheetApp.getUi().alert(
+      "Select student rows (row 2 or below), not the header row.",
+    );
     return;
   }
-  return sendPasses_(indices, true, { mode: mode || 'ACTIVE' });
+  return sendPasses_(indices, true, { mode: mode || "ACTIVE" });
 }
 
 /**
@@ -707,91 +885,110 @@ function sendSelectedRowsWithMode_(mode) {
  * otherwise v2 for active EVENT_ID) or 'TARGET' (v2 for persisted TARGET_EVENT_ID).
  */
 function sendPasses_(targetRowIndices, requireConfirm, opts) {
-  const mode = opts && opts.mode ? String(opts.mode).trim().toUpperCase() : 'ACTIVE';
-  if (mode !== 'ACTIVE' && mode !== 'TARGET') {
-    throw new Error('Invalid issuance mode: ' + mode);
+  const mode =
+    opts && opts.mode ? String(opts.mode).trim().toUpperCase() : "ACTIVE";
+  if (mode !== "ACTIVE" && mode !== "TARGET") {
+    throw new Error("Invalid issuance mode: " + mode);
   }
 
   const ui = SpreadsheetApp.getUi();
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(0)) {
-    ui.alert('Email Sender Busy', 'QR pass emailing is already running. Please wait for it to finish.', ui.ButtonSet.OK);
-    return { ok: false, reason: 'LOCKED' };
+    ui.alert(
+      "Email Sender Busy",
+      "QR pass emailing is already running. Please wait for it to finish.",
+      ui.ButtonSet.OK,
+    );
+    return { ok: false, reason: "LOCKED" };
   }
 
   const startMs = Date.now();
   try {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const rosterSheet = ss.getSheetByName('Roster');
+    const rosterSheet = ss.getSheetByName("Roster");
     if (!rosterSheet) throw new Error('Missing "Roster" tab.');
 
     const cfg = getConfig_();
     requireSecureConfig_(cfg);
 
-    let issueProtocol = 'v2';
+    let issueProtocol = "v2";
     let issueEventId = cfg.EVENT_ID;
 
-    if (mode === 'TARGET') {
-      const targetId = validateV2Field_(cfg.TARGET_EVENT_ID || '', 'TARGET_EVENT_ID');
-      if (targetId === 'DEFAULT' || targetId === cfg.EVENT_ID) {
-        throw new Error('TARGET_EVENT_ID must be a non-DEFAULT event distinct from active Config.EVENT_ID.');
+    if (mode === "TARGET") {
+      const targetId = validateV2Field_(
+        cfg.TARGET_EVENT_ID || "",
+        "TARGET_EVENT_ID",
+      );
+      if (targetId === "DEFAULT" || targetId === cfg.EVENT_ID) {
+        throw new Error(
+          "TARGET_EVENT_ID must be a non-DEFAULT event distinct from active Config.EVENT_ID.",
+        );
       }
-      issueProtocol = 'v2';
+      issueProtocol = "v2";
       issueEventId = targetId;
     } else {
-      const compatEventId = cfg.V1_COMPAT_EVENT_ID || 'DEFAULT';
+      const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
       if (!cfg.V1_COMPAT_RETIRED && cfg.EVENT_ID === compatEventId) {
-        issueProtocol = 'v1';
+        issueProtocol = "v1";
       } else {
-        issueProtocol = 'v2';
+        issueProtocol = "v2";
       }
       issueEventId = cfg.EVENT_ID;
     }
 
     const lastRow = rosterSheet.getLastRow();
     if (lastRow <= 1) {
-      ui.alert('Roster is empty.');
+      ui.alert("Roster is empty.");
       return { ok: true, sent: 0 };
     }
 
     const totalCols = Math.max(14, rosterSheet.getLastColumn());
     const data = rosterSheet.getRange(1, 1, lastRow, totalCols).getValues();
     const candidateIndices = targetRowIndices
-      ? targetRowIndices.filter(i => i >= 1 && i < data.length)
+      ? targetRowIndices.filter((i) => i >= 1 && i < data.length)
       : Array.from({ length: data.length - 1 }, (_, k) => k + 1);
 
-    const isAlreadyDispatchedForTarget = row => {
-      const status = String(row[5] || '').trim();
-      if (mode === 'TARGET') {
-        const rowProto = String(row[12] || '').trim();
-        const rowEvt = String(row[13] || '').trim();
-        return status === 'DISPATCHED' && rowProto === 'v2' && rowEvt === issueEventId;
+    const isAlreadyDispatchedForTarget = (row) => {
+      const status = String(row[5] || "").trim();
+      if (mode === "TARGET") {
+        const rowProto = String(row[12] || "").trim();
+        const rowEvt = String(row[13] || "").trim();
+        return (
+          status === "DISPATCHED" &&
+          rowProto === "v2" &&
+          rowEvt === issueEventId
+        );
       }
-      return status === 'SENT' || status === 'DISPATCHED';
+      return status === "SENT" || status === "DISPATCHED";
     };
 
-    const pendingIndices = candidateIndices.filter(i => {
-      const studentId = String(data[i][0] || '').trim();
-      const cleanEmail = String(data[i][1] || '').trim();
+    const pendingIndices = candidateIndices.filter((i) => {
+      const studentId = String(data[i][0] || "").trim();
+      const cleanEmail = String(data[i][1] || "").trim();
       if (!studentId || !cleanEmail) return false;
       return targetRowIndices ? true : !isAlreadyDispatchedForTarget(data[i]);
     });
 
     if (pendingIndices.length === 0) {
-      ui.alert('No pending passes to email.');
+      ui.alert("No pending passes to email.");
       return { ok: true, sent: 0 };
     }
 
     const initialQuota = MailApp.getRemainingDailyQuota();
     if (requireConfirm) {
-      const alreadyCount = pendingIndices.filter(i => isAlreadyDispatchedForTarget(data[i])).length;
-      const resendNote = alreadyCount > 0 ? `\nAlready dispatched in selection: ${alreadyCount} (will be re-sent).` : '';
+      const alreadyCount = pendingIndices.filter((i) =>
+        isAlreadyDispatchedForTarget(data[i]),
+      ).length;
+      const resendNote =
+        alreadyCount > 0
+          ? `\nAlready dispatched in selection: ${alreadyCount} (will be re-sent).`
+          : "";
       const resp = ui.alert(
-        'Confirm QR Pass Emailing',
+        "Confirm QR Pass Emailing",
         `Mode: ${mode} (${issueProtocol}, Event: ${issueEventId})\nReady to dispatch ${pendingIndices.length} participant(s) via GmailApp.${resendNote}\nRemaining daily email quota: ${initialQuota}.\n\nProceed?`,
-        ui.ButtonSet.YES_NO
+        ui.ButtonSet.YES_NO,
       );
-      if (resp !== ui.Button.YES) return { ok: false, reason: 'CANCELLED' };
+      if (resp !== ui.Button.YES) return { ok: false, reason: "CANCELLED" };
     }
 
     const rowCount = data.length - 1;
@@ -803,43 +1000,47 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
 
     for (let i = 1; i < data.length; i++) {
       expectedNormIds.push(normalizeId_(data[i][0]));
-      efUpdates.push([data[i][4] || '', data[i][5] || '']);
+      efUpdates.push([data[i][4] || "", data[i][5] || ""]);
       hlUpdates.push([
-        data[i][7] || '',
-        data[i][8] || '',
-        data[i][9] || '',
-        data[i][10] || '',
-        data[i][11] || ''
+        data[i][7] || "",
+        data[i][8] || "",
+        data[i][9] || "",
+        data[i][10] || "",
+        data[i][11] || "",
       ]);
-      mnUpdates.push([data[i][12] || '', data[i][13] || '']);
+      mnUpdates.push([data[i][12] || "", data[i][13] || ""]);
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     let sent = 0;
     let errors = 0;
-    let stoppedReason = '';
+    let stoppedReason = "";
 
     try {
       for (const i of pendingIndices) {
         if (MailApp.getRemainingDailyQuota() <= 0) {
-          stoppedReason = 'Daily email quota reached.';
+          stoppedReason = "Daily email quota reached.";
           break;
         }
         if (Date.now() - startMs > EMAIL_TIME_BUDGET_MS) {
-          stoppedReason = 'Time budget reached (4.5 min). Re-run to continue.';
+          stoppedReason = "Time budget reached (4.5 min). Re-run to continue.";
           break;
         }
 
-        const studentId = String(data[i][0] || '').trim().toUpperCase();
-        const cleanEmail = String(data[i][1] || '').trim();
+        const studentId = String(data[i][0] || "")
+          .trim()
+          .toUpperCase();
+        const cleanEmail = String(data[i][1] || "").trim();
         const fullName = data[i][2];
         const section = data[i][3];
-        const token = issueProtocol === 'v2'
-          ? createV2Signature_(issueEventId, studentId, cfg.SECRET_SALT)
-          : createSignature_(studentId, cfg.SECRET_SALT);
-        const payload = issueProtocol === 'v2'
-          ? `v2|${issueEventId}|${studentId}|${token}`
-          : `${studentId}|${token}`;
+        const token =
+          issueProtocol === "v2"
+            ? createV2Signature_(issueEventId, studentId, cfg.SECRET_SALT)
+            : createSignature_(studentId, cfg.SECRET_SALT);
+        const payload =
+          issueProtocol === "v2"
+            ? `v2|${issueEventId}|${studentId}|${token}`
+            : `${studentId}|${token}`;
 
         const prevAttempts = Number(data[i][9]) || 0;
         const attemptNum = prevAttempts + 1;
@@ -851,8 +1052,8 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
         mnUpdates[i - 1][1] = issueEventId;
 
         if (!emailRegex.test(cleanEmail)) {
-          efUpdates[i - 1][1] = 'INVALID_EMAIL';
-          hlUpdates[i - 1][4] = 'Invalid email format';
+          efUpdates[i - 1][1] = "INVALID_EMAIL";
+          hlUpdates[i - 1][4] = "Invalid email format";
           errors++;
           continue;
         }
@@ -861,8 +1062,10 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
         try {
           qrBlob = generateQrPngBlob_(payload, `Pass_${studentId}.png`);
         } catch (qrErr) {
-          efUpdates[i - 1][1] = 'QR_GEN_FAILED';
-          hlUpdates[i - 1][4] = String(qrErr && qrErr.message ? qrErr.message : qrErr).substring(0, 120);
+          efUpdates[i - 1][1] = "QR_GEN_FAILED";
+          hlUpdates[i - 1][4] = String(
+            qrErr && qrErr.message ? qrErr.message : qrErr,
+          ).substring(0, 120);
           errors++;
           continue;
         }
@@ -871,19 +1074,19 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
           const subject = `${cfg.EVENT_TITLE} (${issueEventId}) - Your QR Attendance Pass`;
           const plainBody = [
             `${cfg.EVENT_TITLE} (${issueEventId})`,
-            `Participant: ${fullName || 'Participant'}`,
-            `Student ID: ${studentId}${section ? ' | ' + section : ''}`,
+            `Participant: ${fullName || "Participant"}`,
+            `Student ID: ${studentId}${section ? " | " + section : ""}`,
             `Manual Pass Code: ${payload}`,
-            '',
-            'Bring your physical School ID. You must be scanned at Check-In, Mid-Event, and Check-Out to qualify.'
-          ].join('\n');
+            "",
+            "Bring your physical School ID. You must be scanned at Check-In, Mid-Event, and Check-Out to qualify.",
+          ].join("\n");
 
           const htmlBody = `
             <div style="font-family: Arial, sans-serif; max-width: 420px; margin: 0 auto; border: 1px solid #d0d7de; border-radius: 10px; padding: 20px; text-align: center;">
               <h2 style="margin: 0 0 8px 0;">${escapeHtml_(cfg.EVENT_TITLE)}</h2>
               <p style="margin: 0 0 8px 0; font-size: 12px; color: #555;">Event: ${escapeHtml_(issueEventId)}</p>
-              <p style="margin: 4px 0; font-size: 16px;"><strong>${escapeHtml_(fullName || 'Participant')}</strong></p>
-              <p style="margin: 4px 0 14px 0; color: #555;">ID: ${escapeHtml_(studentId)}${section ? ' | ' + escapeHtml_(section) : ''}</p>
+              <p style="margin: 4px 0; font-size: 16px;"><strong>${escapeHtml_(fullName || "Participant")}</strong></p>
+              <p style="margin: 4px 0 14px 0; color: #555;">ID: ${escapeHtml_(studentId)}${section ? " | " + escapeHtml_(section) : ""}</p>
               <img src="cid:qrpass" alt="QR Pass" style="width: 240px; height: 240px;" />
               <p style="margin: 10px 0 4px 0; font-size: 13px; color: #111;">
                 Manual Pass Code: <code style="background:#f3f4f6; padding:3px 6px; border-radius:4px;">${escapeHtml_(payload)}</code>
@@ -897,19 +1100,21 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
 
           GmailApp.sendEmail(cleanEmail, subject, plainBody, {
             htmlBody,
-            inlineImages: { qrpass: qrBlob }
+            inlineImages: { qrpass: qrBlob },
           });
 
-          efUpdates[i - 1][1] = 'DISPATCHED';
+          efUpdates[i - 1][1] = "DISPATCHED";
           hlUpdates[i - 1][0] = token;
           hlUpdates[i - 1][1] = studentId;
           hlUpdates[i - 1][3] = new Date().toISOString();
-          hlUpdates[i - 1][4] = '';
+          hlUpdates[i - 1][4] = "";
           sent++;
           Utilities.sleep(150);
         } catch (err) {
-          efUpdates[i - 1][1] = 'MAIL_API_ERROR';
-          hlUpdates[i - 1][4] = String(err && err.message ? err.message : err).substring(0, 120);
+          efUpdates[i - 1][1] = "MAIL_API_ERROR";
+          hlUpdates[i - 1][4] = String(
+            err && err.message ? err.message : err,
+          ).substring(0, 120);
           errors++;
         }
       }
@@ -918,15 +1123,18 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
         const currentIds = rosterSheet.getRange(2, 1, rowCount, 1).getValues();
         let shifted = false;
         for (const idx of touchedSet) {
-          const curNorm = normalizeId_(currentIds[idx] ? currentIds[idx][0] : '');
+          const curNorm = normalizeId_(
+            currentIds[idx] ? currentIds[idx][0] : "",
+          );
           if (curNorm !== expectedNormIds[idx]) {
             shifted = true;
             break;
           }
         }
         if (shifted) {
-          stoppedReason = (stoppedReason ? stoppedReason + ' ' : '') +
-            'Roster rows shifted during send; batch write aborted to prevent Student ID mismatch.';
+          stoppedReason =
+            (stoppedReason ? stoppedReason + " " : "") +
+            "Roster rows shifted during send; batch write aborted to prevent Student ID mismatch.";
         } else {
           rosterSheet.getRange(2, 5, rowCount, 2).setValues(efUpdates);
           rosterSheet.getRange(2, 8, rowCount, 5).setValues(hlUpdates);
@@ -936,9 +1144,19 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
       invalidateRosterCache_();
     }
 
-    const summary = `Mode: ${mode} (${issueProtocol} / ${issueEventId})\nDispatched: ${sent}\nErrors: ${errors}` + (stoppedReason ? `\nNote: ${stoppedReason}` : '');
-    ui.alert('QR Pass Email Summary', summary, ui.ButtonSet.OK);
-    return { ok: true, mode, protocol: issueProtocol, eventId: issueEventId, sent, errors, stoppedReason };
+    const summary =
+      `Mode: ${mode} (${issueProtocol} / ${issueEventId})\nDispatched: ${sent}\nErrors: ${errors}` +
+      (stoppedReason ? `\nNote: ${stoppedReason}` : "");
+    ui.alert("QR Pass Email Summary", summary, ui.ButtonSet.OK);
+    return {
+      ok: true,
+      mode,
+      protocol: issueProtocol,
+      eventId: issueEventId,
+      sent,
+      errors,
+      stoppedReason,
+    };
   } finally {
     lock.releaseLock();
   }
@@ -950,7 +1168,11 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
 function rebuildVerifiedAttendance() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) {
-    SpreadsheetApp.getUi().alert('Rebuild Busy', 'Another scan or rebuild is in progress. Please try again in a moment.', SpreadsheetApp.getUi().ButtonSet.OK);
+    SpreadsheetApp.getUi().alert(
+      "Rebuild Busy",
+      "Another scan or rebuild is in progress. Please try again in a moment.",
+      SpreadsheetApp.getUi().ButtonSet.OK,
+    );
     return;
   }
   try {
@@ -979,9 +1201,9 @@ function rebuildVerifiedAttendanceTrigger() {
  */
 function rebuildVerifiedAttendance_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const rosterSheet = ss.getSheetByName('Roster');
-  const logSheet = ss.getSheetByName('Attendance Log');
-  const verSheet = ss.getSheetByName('Verified Attendance');
+  const rosterSheet = ss.getSheetByName("Roster");
+  const logSheet = ss.getSheetByName("Attendance Log");
+  const verSheet = ss.getSheetByName("Verified Attendance");
   if (!rosterSheet || !logSheet || !verSheet) return;
 
   const cfg = getConfig_();
@@ -989,16 +1211,20 @@ function rebuildVerifiedAttendance_() {
 
   const rosterLastRow = rosterSheet.getLastRow();
   if (rosterLastRow > 1) {
-    const rosterData = rosterSheet.getRange(2, 1, rosterLastRow - 1, 4).getValues();
+    const rosterData = rosterSheet
+      .getRange(2, 1, rosterLastRow - 1, 4)
+      .getValues();
     for (let i = 0; i < rosterData.length; i++) {
-      const rId = String(rosterData[i][0] || '').trim().toUpperCase();
+      const rId = String(rosterData[i][0] || "")
+        .trim()
+        .toUpperCase();
       const normId = normalizeId_(rId);
       if (!normId) continue;
       summary[normId] = {
         studentId: rId,
-        fullName: String(rosterData[i][2] || '').trim(),
-        section: String(rosterData[i][3] || '').trim(),
-        stages: {}
+        fullName: String(rosterData[i][2] || "").trim(),
+        section: String(rosterData[i][3] || "").trim(),
+        stages: {},
       };
     }
   }
@@ -1008,8 +1234,8 @@ function rebuildVerifiedAttendance_() {
     const logData = logSheet.getRange(2, 1, logLastRow - 1, 8).getValues();
     for (let r = 0; r < logData.length; r++) {
       const [ts, stage, rawId, name, sec, , status, eventId] = logData[r];
-      if (String(status || '').trim() !== 'ACCEPTED') continue;
-      const rowEventId = String(eventId || '').trim() || 'DEFAULT';
+      if (String(status || "").trim() !== "ACCEPTED") continue;
+      const rowEventId = String(eventId || "").trim() || "DEFAULT";
       if (rowEventId !== cfg.EVENT_ID) continue;
 
       const normId = normalizeId_(rawId);
@@ -1017,43 +1243,48 @@ function rebuildVerifiedAttendance_() {
 
       if (!summary[normId]) {
         summary[normId] = {
-          studentId: String(rawId || '').trim().toUpperCase(),
-          fullName: String(name || '').trim(),
-          section: String(sec || '').trim(),
-          stages: {}
+          studentId: String(rawId || "")
+            .trim()
+            .toUpperCase(),
+          fullName: String(name || "").trim(),
+          section: String(sec || "").trim(),
+          stages: {},
         };
       }
 
-      const st = String(stage || '').trim();
+      const st = String(stage || "").trim();
       if (VALID_STAGES.includes(st) && !summary[normId].stages[st]) {
         summary[normId].stages[st] = Utilities.formatDate(
           new Date(ts),
           Session.getScriptTimeZone(),
-          'HH:mm:ss'
+          "HH:mm:ss",
         );
       }
     }
   }
 
   const outRows = [];
-  Object.keys(summary).sort().forEach(k => {
-    const item = summary[k];
-    const ci = item.stages['Check-In'] || '—';
-    const me = item.stages['Mid-Event'] || '—';
-    const co = item.stages['Check-Out'] || '—';
-    const count = (ci !== '—' ? 1 : 0) + (me !== '—' ? 1 : 0) + (co !== '—' ? 1 : 0);
-    const qualified = count === 3 ? 'QUALIFIED' : 'INCOMPLETE';
-    outRows.push([
-      safeCell_(item.studentId),
-      safeCell_(item.fullName),
-      safeCell_(item.section),
-      ci,
-      me,
-      co,
-      qualified,
-      count
-    ]);
-  });
+  Object.keys(summary)
+    .sort()
+    .forEach((k) => {
+      const item = summary[k];
+      const ci = item.stages["Check-In"] || "—";
+      const me = item.stages["Mid-Event"] || "—";
+      const co = item.stages["Check-Out"] || "—";
+      const count =
+        (ci !== "—" ? 1 : 0) + (me !== "—" ? 1 : 0) + (co !== "—" ? 1 : 0);
+      const qualified = count === 3 ? "QUALIFIED" : "INCOMPLETE";
+      outRows.push([
+        safeCell_(item.studentId),
+        safeCell_(item.fullName),
+        safeCell_(item.section),
+        ci,
+        me,
+        co,
+        qualified,
+        count,
+      ]);
+    });
 
   const existingLastRow = verSheet.getLastRow();
   if (existingLastRow > 1) {
@@ -1075,53 +1306,67 @@ function applyAllSystemUpgrades() {
   const runStep = (name, fn) => {
     try {
       const detail = fn();
-      report.push(`✅ ${name}${detail ? ': ' + detail : ''}`);
+      report.push(`✅ ${name}${detail ? ": " + detail : ""}`);
     } catch (err) {
       report.push(`❌ ${name}: ${err && err.message ? err.message : err}`);
     }
   };
 
-  runStep('Config Keys & Validation', () => ensureConfigKeys_(ss));
-  runStep('Sheets & Canonical Headers', () => ensureSheetsAndHeaders_(ss));
-  runStep('Plain-Text ID Formatting', () => formatIdColumnsAsText_(ss));
-  runStep('Backfill Missing Roster Tokens', () => backfillRosterTokens_(ss));
-  runStep('Roster Integrity Audit', () => {
+  runStep("Config Keys & Validation", () => ensureConfigKeys_(ss));
+  runStep("Sheets & Canonical Headers", () => ensureSheetsAndHeaders_(ss));
+  runStep("Plain-Text ID Formatting", () => formatIdColumnsAsText_(ss));
+  runStep("Backfill Missing Roster Tokens", () => backfillRosterTokens_(ss));
+  runStep("Roster Integrity Audit", () => {
     const a = auditRosterIntegrity_(ss);
     return `Duplicates=${a.duplicateIds.length}, InvalidEmails=${a.invalidEmails.length}, MissingNames=${a.missingNames.length}, TokenDrift=${a.tokenDrift.length}`;
   });
-  runStep('Conditional Formatting', () => applyConditionalFormatting_(ss));
-  runStep('Installable Triggers (5-Min + onEdit)', () => ensureInstallableTriggers_());
-  runStep('Rebuild Verified Attendance', () => {
+  runStep("Conditional Formatting", () => applyConditionalFormatting_(ss));
+  runStep("Installable Triggers (5-Min + onEdit)", () =>
+    ensureInstallableTriggers_(),
+  );
+  runStep("Rebuild Verified Attendance", () => {
     const lock = LockService.getScriptLock();
-    if (!lock.tryLock(10000)) throw new Error('Lock busy');
+    if (!lock.tryLock(10000)) throw new Error("Lock busy");
     try {
       rebuildVerifiedAttendance_();
     } finally {
       lock.releaseLock();
     }
-    return 'Synced to active EVENT_ID';
+    return "Synced to active EVENT_ID";
   });
-  runStep('Security Audit', () => {
+  runStep("Security Audit", () => {
     const cfg = getConfig_();
     requireSecureConfig_(cfg);
     return `PIN & Salt valid (EVENT_ID=${cfg.EVENT_ID}, LOCKED_STAGE=${cfg.LOCKED_STAGE})`;
   });
 
-  SpreadsheetApp.getUi().alert('System Upgrades Complete', report.join('\n'), SpreadsheetApp.getUi().ButtonSet.OK);
+  SpreadsheetApp.getUi().alert(
+    "System Upgrades Complete",
+    report.join("\n"),
+    SpreadsheetApp.getUi().ButtonSet.OK,
+  );
 }
 
 function ensureConfigKeys_(ss) {
-  let sheet = ss.getSheetByName('Config');
+  let sheet = ss.getSheetByName("Config");
   if (!sheet) {
-    sheet = ss.insertSheet('Config');
-    sheet.getRange(1, 1, 1, 3).setValues([['Key', 'Value', 'Notes']]);
+    sheet = ss.insertSheet("Config");
+    sheet.getRange(1, 1, 1, 3).setValues([["Key", "Value", "Notes"]]);
   }
   const rows = sheet.getLastRow() > 0 ? sheet.getDataRange().getValues() : [];
-  const existingKeys = new Set(rows.map(r => String(r[0] || '').trim()));
+  const existingKeys = new Set(rows.map((r) => String(r[0] || "").trim()));
   const defaults = [
-    ['EVENT_ID', 'DEFAULT', 'Unique identifier for the active event (scopes duplicates and Verified Attendance)'],
-    ['LOCKED_STAGE', 'AUTO', 'Set to Check-In, Mid-Event, Check-Out, or AUTO'],
-    ['ENFORCE_STAGE_ORDER', 'FALSE', 'If TRUE, requires Check-In before Mid-Event and Mid-Event before Check-Out']
+    [
+      "EVENT_ID",
+      "DEFAULT",
+      "Unique identifier for the active event (scopes duplicates and Verified Attendance)",
+    ],
+    ["LOCKED_STAGE", "AUTO", "Set to Check-In, Mid-Event, Check-Out, or AUTO"],
+    [
+      "ENFORCE_STAGE_ORDER",
+      "FALSE",
+      "If TRUE, requires Check-In before Mid-Event and Mid-Event before Check-Out",
+    ],
   ];
   const toAdd = defaults.filter(([k]) => !existingKeys.has(k));
   if (toAdd.length > 0) {
@@ -1131,33 +1376,80 @@ function ensureConfigKeys_(ss) {
   // Apply dropdown validation to LOCKED_STAGE value cell
   const updatedRows = sheet.getDataRange().getValues();
   for (let i = 0; i < updatedRows.length; i++) {
-    if (String(updatedRows[i][0] || '').trim() === 'LOCKED_STAGE') {
+    if (String(updatedRows[i][0] || "").trim() === "LOCKED_STAGE") {
       const rule = SpreadsheetApp.newDataValidation()
-        .requireValueInList(['AUTO', 'Check-In', 'Mid-Event', 'Check-Out'], true)
+        .requireValueInList(
+          ["AUTO", "Check-In", "Mid-Event", "Check-Out"],
+          true,
+        )
         .setAllowInvalid(false)
         .build();
       sheet.getRange(i + 1, 2).setDataValidation(rule);
       break;
     }
   }
-  return toAdd.length ? `Added ${toAdd.map(r => r[0]).join(', ')}` : 'All keys present';
+  return toAdd.length
+    ? `Added ${toAdd.map((r) => r[0]).join(", ")}`
+    : "All keys present";
 }
 
 function ensureSheetsAndHeaders_(ss) {
   const specs = [
-    { name: 'Config', headers: ['Key', 'Value', 'Notes'] },
-    { name: 'Roster', headers: ['Student ID', 'Email', 'Full Name', 'Section', 'Token', 'Pass Status', 'QR Preview', 'Last Sent Token', 'Last Sent ID', 'Attempt #', 'Dispatched At', 'Last Error', 'Pass Protocol', 'Pass Event ID'] },
-    { name: 'Attendance Log', headers: ['Timestamp', 'Stage', 'Student ID', 'Full Name', 'Section', 'Usher Label', 'Scan Status', 'Event ID'] },
-    { name: 'Verified Attendance', headers: ['Student ID', 'Full Name', 'Section', 'Check-In', 'Mid-Event', 'Check-Out', 'Qualification', 'Stage Count'] }
+    { name: "Config", headers: ["Key", "Value", "Notes"] },
+    {
+      name: "Roster",
+      headers: [
+        "Student ID",
+        "Email",
+        "Full Name",
+        "Section",
+        "Token",
+        "Pass Status",
+        "QR Preview",
+        "Last Sent Token",
+        "Last Sent ID",
+        "Attempt #",
+        "Dispatched At",
+        "Last Error",
+        "Pass Protocol",
+        "Pass Event ID",
+      ],
+    },
+    {
+      name: "Attendance Log",
+      headers: [
+        "Timestamp",
+        "Stage",
+        "Student ID",
+        "Full Name",
+        "Section",
+        "Usher Label",
+        "Scan Status",
+        "Event ID",
+      ],
+    },
+    {
+      name: "Verified Attendance",
+      headers: [
+        "Student ID",
+        "Full Name",
+        "Section",
+        "Check-In",
+        "Mid-Event",
+        "Check-Out",
+        "Qualification",
+        "Stage Count",
+      ],
+    },
   ];
   let updated = 0;
-  specs.forEach(spec => {
+  specs.forEach((spec) => {
     let sheet = ss.getSheetByName(spec.name);
     if (!sheet) sheet = ss.insertSheet(spec.name);
     const current = sheet.getRange(1, 1, 1, spec.headers.length).getValues()[0];
     let dirty = false;
     const merged = spec.headers.map((h, idx) => {
-      if (String(current[idx] || '').trim() === '') {
+      if (String(current[idx] || "").trim() === "") {
         dirty = true;
         return h;
       }
@@ -1168,20 +1460,25 @@ function ensureSheetsAndHeaders_(ss) {
       updated++;
     }
   });
-  return updated ? `Repaired headers on ${updated} tab(s)` : 'All headers intact';
+  return updated
+    ? `Repaired headers on ${updated} tab(s)`
+    : "All headers intact";
 }
 
 function formatIdColumnsAsText_(ss) {
   const targets = [
-    { name: 'Roster', col: 1 },
-    { name: 'Attendance Log', col: 3 },
-    { name: 'Verified Attendance', col: 1 }
+    { name: "Roster", col: 1 },
+    { name: "Attendance Log", col: 3 },
+    { name: "Verified Attendance", col: 1 },
   ];
-  targets.forEach(t => {
+  targets.forEach((t) => {
     const s = ss.getSheetByName(t.name);
-    if (s) s.getRange(2, t.col, Math.max(1, s.getMaxRows() - 1), 1).setNumberFormat('@');
+    if (s)
+      s.getRange(2, t.col, Math.max(1, s.getMaxRows() - 1), 1).setNumberFormat(
+        "@",
+      );
   });
-  return 'Applied @ format to ID columns';
+  return "Applied @ format to ID columns";
 }
 
 /**
@@ -1189,12 +1486,20 @@ function formatIdColumnsAsText_(ss) {
  * Distinguishes Student ID edits (TOKEN_DRIFT_ID_CHANGED) from secret rotation (TOKEN_DRIFT_SECRET_ROTATED).
  */
 function auditRosterIntegrity_(ss) {
-  const result = { duplicateIds: [], invalidEmails: [], missingNames: [], tokenDrift: [] };
-  const rosterSheet = ss.getSheetByName('Roster');
+  const result = {
+    duplicateIds: [],
+    invalidEmails: [],
+    missingNames: [],
+    tokenDrift: [],
+  };
+  const rosterSheet = ss.getSheetByName("Roster");
   if (!rosterSheet || rosterSheet.getLastRow() <= 1) return result;
 
   const cfg = getConfig_();
-  const hasSalt = cfg.SECRET_SALT && cfg.SECRET_SALT !== PLACEHOLDER_SALT && cfg.SECRET_SALT.length >= 16;
+  const hasSalt =
+    cfg.SECRET_SALT &&
+    cfg.SECRET_SALT !== PLACEHOLDER_SALT &&
+    cfg.SECRET_SALT.length >= 16;
   const lastRow = rosterSheet.getLastRow();
   const numCols = Math.max(6, Math.min(9, rosterSheet.getLastColumn()));
   const rows = rosterSheet.getRange(2, 1, lastRow - 1, numCols).getValues();
@@ -1204,17 +1509,36 @@ function auditRosterIntegrity_(ss) {
 
   for (let i = 0; i < rows.length; i++) {
     const rowNum = i + 2;
-    const rawId = String(rows[i][0] || '').trim().toUpperCase();
-    const email = String(rows[i][1] || '').trim();
-    const fullName = String(rows[i][2] || '').trim();
-    const token = String(rows[i][4] || '').trim().toUpperCase();
-    const lastSentToken = numCols >= 8 ? String(rows[i][7] || '').trim().toUpperCase() : '';
-    const lastSentId = numCols >= 9 ? String(rows[i][8] || '').trim().toUpperCase() : '';
+    const rawId = String(rows[i][0] || "")
+      .trim()
+      .toUpperCase();
+    const email = String(rows[i][1] || "").trim();
+    const fullName = String(rows[i][2] || "").trim();
+    const token = String(rows[i][4] || "")
+      .trim()
+      .toUpperCase();
+    const lastSentToken =
+      numCols >= 8
+        ? String(rows[i][7] || "")
+            .trim()
+            .toUpperCase()
+        : "";
+    const lastSentId =
+      numCols >= 9
+        ? String(rows[i][8] || "")
+            .trim()
+            .toUpperCase()
+        : "";
     const normId = normalizeId_(rawId);
 
     if (normId) {
       if (seenIds[normId]) {
-        result.duplicateIds.push({ row: rowNum, firstRow: seenIds[normId], studentId: rawId, normId });
+        result.duplicateIds.push({
+          row: rowNum,
+          firstRow: seenIds[normId],
+          studentId: rawId,
+          normId,
+        });
       } else {
         seenIds[normId] = rowNum;
       }
@@ -1231,9 +1555,10 @@ function auditRosterIntegrity_(ss) {
       const expected = createSignature_(rawId, cfg.SECRET_SALT);
       const cmpToken = lastSentToken || token;
       if (cmpToken && cmpToken !== expected) {
-        const reason = (lastSentId && normalizeId_(lastSentId) !== normId)
-          ? 'TOKEN_DRIFT_ID_CHANGED'
-          : 'TOKEN_DRIFT_SECRET_ROTATED';
+        const reason =
+          lastSentId && normalizeId_(lastSentId) !== normId
+            ? "TOKEN_DRIFT_ID_CHANGED"
+            : "TOKEN_DRIFT_SECRET_ROTATED";
         result.tokenDrift.push({ row: rowNum, studentId: rawId, reason });
       }
     }
@@ -1242,8 +1567,8 @@ function auditRosterIntegrity_(ss) {
 }
 
 function backfillRosterTokens_(ss) {
-  const rosterSheet = ss.getSheetByName('Roster');
-  if (!rosterSheet || rosterSheet.getLastRow() <= 1) return 'No roster rows';
+  const rosterSheet = ss.getSheetByName("Roster");
+  if (!rosterSheet || rosterSheet.getLastRow() <= 1) return "No roster rows";
   const cfg = getConfig_();
   requireSecureConfig_(cfg);
 
@@ -1252,9 +1577,13 @@ function backfillRosterTokens_(ss) {
   const tokenCol = [];
   let filled = 0;
   for (let i = 0; i < idsAndTokens.length; i++) {
-    const studentId = String(idsAndTokens[i][0] || '').trim().toUpperCase();
-    const existing = String(idsAndTokens[i][4] || '').trim();
-    const expected = studentId ? createSignature_(studentId, cfg.SECRET_SALT) : '';
+    const studentId = String(idsAndTokens[i][0] || "")
+      .trim()
+      .toUpperCase();
+    const existing = String(idsAndTokens[i][4] || "").trim();
+    const expected = studentId
+      ? createSignature_(studentId, cfg.SECRET_SALT)
+      : "";
     if (studentId && existing !== expected) {
       tokenCol.push([expected]);
       filled++;
@@ -1272,56 +1601,92 @@ function backfillRosterTokens_(ss) {
 function applyConditionalFormatting_(ss) {
   const replaceColRules = (sheet, colNum, newRules) => {
     if (!sheet) return;
-    const preserved = sheet.getConditionalFormatRules().filter(rule => {
+    const preserved = sheet.getConditionalFormatRules().filter((rule) => {
       const ranges = rule.getRanges ? rule.getRanges() : [];
-      return !ranges.some(r => r.getColumn && r.getColumn() === colNum);
+      return !ranges.some((r) => r.getColumn && r.getColumn() === colNum);
     });
     sheet.setConditionalFormatRules(preserved.concat(newRules));
   };
 
-  const logSheet = ss.getSheetByName('Attendance Log');
+  const logSheet = ss.getSheetByName("Attendance Log");
   if (logSheet) {
-    const range = logSheet.getRange(2, 7, Math.max(1, logSheet.getMaxRows() - 1), 1);
+    const range = logSheet.getRange(
+      2,
+      7,
+      Math.max(1, logSheet.getMaxRows() - 1),
+      1,
+    );
     const rules = [
-      SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('ACCEPTED').setBackground('#d1fae5').setFontColor('#065f46').setRanges([range]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('DUPLICATE').setBackground('#fef3c7').setFontColor('#92400e').setRanges([range]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextStartsWith('REJECTED').setBackground('#fee2e2').setFontColor('#991b1b').setRanges([range]).build()
+      SpreadsheetApp.newConditionalFormatRule()
+        .whenTextEqualTo("ACCEPTED")
+        .setBackground("#d1fae5")
+        .setFontColor("#065f46")
+        .setRanges([range])
+        .build(),
+      SpreadsheetApp.newConditionalFormatRule()
+        .whenTextEqualTo("DUPLICATE")
+        .setBackground("#fef3c7")
+        .setFontColor("#92400e")
+        .setRanges([range])
+        .build(),
+      SpreadsheetApp.newConditionalFormatRule()
+        .whenTextStartsWith("REJECTED")
+        .setBackground("#fee2e2")
+        .setFontColor("#991b1b")
+        .setRanges([range])
+        .build(),
     ];
     replaceColRules(logSheet, 7, rules);
   }
 
-  const verSheet = ss.getSheetByName('Verified Attendance');
+  const verSheet = ss.getSheetByName("Verified Attendance");
   if (verSheet) {
-    const range = verSheet.getRange(2, 7, Math.max(1, verSheet.getMaxRows() - 1), 1);
+    const range = verSheet.getRange(
+      2,
+      7,
+      Math.max(1, verSheet.getMaxRows() - 1),
+      1,
+    );
     const rules = [
-      SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('QUALIFIED').setBackground('#d1fae5').setFontColor('#065f46').setRanges([range]).build(),
-      SpreadsheetApp.newConditionalFormatRule().whenTextEqualTo('INCOMPLETE').setBackground('#fef3c7').setFontColor('#92400e').setRanges([range]).build()
+      SpreadsheetApp.newConditionalFormatRule()
+        .whenTextEqualTo("QUALIFIED")
+        .setBackground("#d1fae5")
+        .setFontColor("#065f46")
+        .setRanges([range])
+        .build(),
+      SpreadsheetApp.newConditionalFormatRule()
+        .whenTextEqualTo("INCOMPLETE")
+        .setBackground("#fef3c7")
+        .setFontColor("#92400e")
+        .setRanges([range])
+        .build(),
     ];
     replaceColRules(verSheet, 7, rules);
   }
-  return 'Updated Log & Verified Attendance rules (preserved custom rules)';
+  return "Updated Log & Verified Attendance rules (preserved custom rules)";
 }
 
 function ensureInstallableTriggers_() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const existing = ScriptApp.getProjectTriggers();
-  const rebuildTriggers = existing.filter(t => t.getHandlerFunction() === 'rebuildVerifiedAttendanceTrigger');
+  const rebuildTriggers = existing.filter(
+    (t) => t.getHandlerFunction() === "rebuildVerifiedAttendanceTrigger",
+  );
   if (rebuildTriggers.length !== 1) {
-    rebuildTriggers.forEach(t => ScriptApp.deleteTrigger(t));
-    ScriptApp.newTrigger('rebuildVerifiedAttendanceTrigger')
+    rebuildTriggers.forEach((t) => ScriptApp.deleteTrigger(t));
+    ScriptApp.newTrigger("rebuildVerifiedAttendanceTrigger")
       .timeBased()
       .everyMinutes(5)
       .create();
   }
-  const editTriggers = existing.filter(t => t.getHandlerFunction() === 'onSheetEdit');
+  const editTriggers = existing.filter(
+    (t) => t.getHandlerFunction() === "onSheetEdit",
+  );
   if (editTriggers.length !== 1) {
-    editTriggers.forEach(t => ScriptApp.deleteTrigger(t));
-    ScriptApp.newTrigger('onSheetEdit')
-      .forSpreadsheet(ss)
-      .onEdit()
-      .create();
+    editTriggers.forEach((t) => ScriptApp.deleteTrigger(t));
+    ScriptApp.newTrigger("onSheetEdit").forSpreadsheet(ss).onEdit().create();
   }
-  return '5-minute + onEdit triggers active';
+  return "5-minute + onEdit triggers active";
 }
 
 /**
@@ -1337,29 +1702,34 @@ function migrateSecretsToProperties() {
   const props = PropertiesService.getScriptProperties();
   const toStore = {
     USHER_PIN: cfg.USHER_PIN,
-    SECRET_SALT: cfg.SECRET_SALT
+    SECRET_SALT: cfg.SECRET_SALT,
   };
-  if (!props.getProperty('V1_COMPAT_EVENT_ID')) {
-    toStore.V1_COMPAT_EVENT_ID = cfg.EVENT_ID || 'DEFAULT';
+  if (!props.getProperty("V1_COMPAT_EVENT_ID")) {
+    toStore.V1_COMPAT_EVENT_ID = cfg.EVENT_ID || "DEFAULT";
   }
   props.setProperties(toStore);
 
   // Read-back verification before clearing plaintext Config cells
-  if (props.getProperty('USHER_PIN') !== cfg.USHER_PIN || props.getProperty('SECRET_SALT') !== cfg.SECRET_SALT) {
-    throw new Error('ScriptProperties read-back verification failed; Config left untouched.');
+  if (
+    props.getProperty("USHER_PIN") !== cfg.USHER_PIN ||
+    props.getProperty("SECRET_SALT") !== cfg.SECRET_SALT
+  ) {
+    throw new Error(
+      "ScriptProperties read-back verification failed; Config left untouched.",
+    );
   }
 
-  const configSheet = ss.getSheetByName('Config');
+  const configSheet = ss.getSheetByName("Config");
   if (configSheet && configSheet.getLastRow() > 1) {
     const rows = configSheet.getDataRange().getValues();
     for (let i = 1; i < rows.length; i++) {
-      const k = String(rows[i][0] || '').trim();
-      if (k === 'USHER_PIN' || k === 'SECRET_SALT') {
-        configSheet.getRange(i + 1, 2).setValue('');
+      const k = String(rows[i][0] || "").trim();
+      if (k === "USHER_PIN" || k === "SECRET_SALT") {
+        configSheet.getRange(i + 1, 2).setValue("");
       }
     }
   }
-  return { ok: true, compatEventId: props.getProperty('V1_COMPAT_EVENT_ID') };
+  return { ok: true, compatEventId: props.getProperty("V1_COMPAT_EVENT_ID") };
 }
 
 /**
@@ -1369,29 +1739,29 @@ function migrateSecretsToProperties() {
 function restoreSecretsToConfigFromProperties() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const props = PropertiesService.getScriptProperties();
-  const pin = props.getProperty('USHER_PIN');
-  const salt = props.getProperty('SECRET_SALT');
+  const pin = props.getProperty("USHER_PIN");
+  const salt = props.getProperty("SECRET_SALT");
   if (!pin || !salt) {
-    throw new Error('Missing USHER_PIN or SECRET_SALT in ScriptProperties.');
+    throw new Error("Missing USHER_PIN or SECRET_SALT in ScriptProperties.");
   }
-  const configSheet = ss.getSheetByName('Config');
-  if (!configSheet) throw new Error('Missing Config tab.');
+  const configSheet = ss.getSheetByName("Config");
+  if (!configSheet) throw new Error("Missing Config tab.");
 
   const rows = configSheet.getDataRange().getValues();
   let wrotePin = false;
   let wroteSalt = false;
   for (let i = 1; i < rows.length; i++) {
-    const k = String(rows[i][0] || '').trim();
-    if (k === 'USHER_PIN') {
+    const k = String(rows[i][0] || "").trim();
+    if (k === "USHER_PIN") {
       configSheet.getRange(i + 1, 2).setValue(pin);
       wrotePin = true;
-    } else if (k === 'SECRET_SALT') {
+    } else if (k === "SECRET_SALT") {
       configSheet.getRange(i + 1, 2).setValue(salt);
       wroteSalt = true;
     }
   }
   if (!wrotePin || !wroteSalt) {
-    throw new Error('Could not find USHER_PIN and SECRET_SALT rows in Config.');
+    throw new Error("Could not find USHER_PIN and SECRET_SALT rows in Config.");
   }
   return { ok: true };
 }
@@ -1401,27 +1771,31 @@ function restoreSecretsToConfigFromProperties() {
  * Refuses to execute if LEGACY_SECRET_SALT is already populated.
  */
 function rotateSecretSalt(newSalt) {
-  const cleanNew = String(newSalt || '').trim();
+  const cleanNew = String(newSalt || "").trim();
   if (!cleanNew || cleanNew === PLACEHOLDER_SALT || cleanNew.length < 16) {
-    throw new Error('New SECRET_SALT must be at least 16 non-placeholder characters.');
+    throw new Error(
+      "New SECRET_SALT must be at least 16 non-placeholder characters.",
+    );
   }
   const cfg = getConfig_();
   requireSecureConfig_(cfg);
 
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty('LEGACY_SECRET_SALT')) {
-    throw new Error('LEGACY_SECRET_SALT is still active. Run retireLegacySecretSalt() after reissuing passes before rotating again.');
+  if (props.getProperty("LEGACY_SECRET_SALT")) {
+    throw new Error(
+      "LEGACY_SECRET_SALT is still active. Run retireLegacySecretSalt() after reissuing passes before rotating again.",
+    );
   }
 
   props.setProperties({
     LEGACY_SECRET_SALT: cfg.SECRET_SALT,
-    SECRET_SALT: cleanNew
+    SECRET_SALT: cleanNew,
   });
   return { ok: true };
 }
 
 function retireLegacySecretSalt() {
-  PropertiesService.getScriptProperties().deleteProperty('LEGACY_SECRET_SALT');
+  PropertiesService.getScriptProperties().deleteProperty("LEGACY_SECRET_SALT");
   return { ok: true };
 }
 
@@ -1430,15 +1804,22 @@ function retireLegacySecretSalt() {
  * without changing active Config.EVENT_ID.
  */
 function setTargetEventId(targetEventId) {
-  const cleanTarget = validateV2Field_(targetEventId, 'TARGET_EVENT_ID');
-  if (cleanTarget === 'DEFAULT') {
-    throw new Error('TARGET_EVENT_ID cannot be DEFAULT (reserved exclusively for legacy v1 compatibility).');
+  const cleanTarget = validateV2Field_(targetEventId, "TARGET_EVENT_ID");
+  if (cleanTarget === "DEFAULT") {
+    throw new Error(
+      "TARGET_EVENT_ID cannot be DEFAULT (reserved exclusively for legacy v1 compatibility).",
+    );
   }
   const cfg = getConfig_();
   if (cleanTarget === cfg.EVENT_ID) {
-    throw new Error('TARGET_EVENT_ID must differ from the active Config.EVENT_ID.');
+    throw new Error(
+      "TARGET_EVENT_ID must differ from the active Config.EVENT_ID.",
+    );
   }
-  PropertiesService.getScriptProperties().setProperty('TARGET_EVENT_ID', cleanTarget);
+  PropertiesService.getScriptProperties().setProperty(
+    "TARGET_EVENT_ID",
+    cleanTarget,
+  );
   return { ok: true, targetEventId: cleanTarget };
 }
 
@@ -1449,7 +1830,7 @@ function setTargetEventId(targetEventId) {
  */
 function evaluateTransitionReadiness_(ss, cfg, targetId) {
   const audit = auditRosterIntegrity_(ss);
-  const rosterSheet = ss.getSheetByName('Roster');
+  const rosterSheet = ss.getSheetByName("Roster");
   const missingIssuance = [];
   const failedDispatch = [];
   const unresolvedRecipients = [];
@@ -1461,11 +1842,11 @@ function evaluateTransitionReadiness_(ss, cfg, targetId) {
       eligibleCount: 0,
       duplicates: audit.duplicateIds,
       invalidRecords: [...audit.invalidEmails, ...audit.missingNames],
-      missingIssuance: [{ row: 0, reason: 'Roster is empty' }],
+      missingIssuance: [{ row: 0, reason: "Roster is empty" }],
       failedDispatch,
       unresolvedRecipients,
       readyToAcknowledge: false,
-      digest: ''
+      digest: "",
     };
   }
 
@@ -1476,57 +1857,85 @@ function evaluateTransitionReadiness_(ss, cfg, targetId) {
 
   for (let i = 0; i < rows.length; i++) {
     const rowNum = i + 2;
-    const rawId = String(rows[i][0] || '').trim().toUpperCase();
-    const email = String(rows[i][1] || '').trim();
-    const fullName = String(rows[i][2] || '').trim();
-    const token = String(rows[i][4] || '').trim().toUpperCase();
-    const status = String(rows[i][5] || '').trim();
-    const lastSentToken = String(rows[i][7] || '').trim().toUpperCase();
-    const lastSentId = String(rows[i][8] || '').trim().toUpperCase();
-    const proto = String(rows[i][12] || '').trim();
-    const passEvt = String(rows[i][13] || '').trim();
+    const rawId = String(rows[i][0] || "")
+      .trim()
+      .toUpperCase();
+    const email = String(rows[i][1] || "").trim();
+    const fullName = String(rows[i][2] || "").trim();
+    const token = String(rows[i][4] || "")
+      .trim()
+      .toUpperCase();
+    const status = String(rows[i][5] || "").trim();
+    const lastSentToken = String(rows[i][7] || "")
+      .trim()
+      .toUpperCase();
+    const lastSentId = String(rows[i][8] || "")
+      .trim()
+      .toUpperCase();
+    const proto = String(rows[i][12] || "").trim();
+    const passEvt = String(rows[i][13] || "").trim();
 
-    const attemptNum = String(rows[i][9] === undefined || rows[i][9] === null ? '' : rows[i][9]).trim();
-    const dispatchedAt = String(rows[i][10] === undefined || rows[i][10] === null ? '' : rows[i][10]).trim();
-    const lastError = String(rows[i][11] === undefined || rows[i][11] === null ? '' : rows[i][11]).trim();
+    const attemptNum = String(
+      rows[i][9] === undefined || rows[i][9] === null ? "" : rows[i][9],
+    ).trim();
+    const dispatchedAt = String(
+      rows[i][10] === undefined || rows[i][10] === null ? "" : rows[i][10],
+    ).trim();
+    const lastError = String(
+      rows[i][11] === undefined || rows[i][11] === null ? "" : rows[i][11],
+    ).trim();
 
     if (!rawId && !email && !fullName) continue;
     eligibleCount++;
 
-    const expectedV2 = rawId ? createV2Signature_(targetId, rawId, cfg.SECRET_SALT) : '';
-    if (proto !== 'v2' || passEvt !== targetId || token !== expectedV2 || lastSentToken !== expectedV2 || lastSentId !== rawId) {
+    const expectedV2 = rawId
+      ? createV2Signature_(targetId, rawId, cfg.SECRET_SALT)
+      : "";
+    if (
+      proto !== "v2" ||
+      passEvt !== targetId ||
+      token !== expectedV2 ||
+      lastSentToken !== expectedV2 ||
+      lastSentId !== rawId
+    ) {
       missingIssuance.push({ row: rowNum, studentId: rawId, proto, passEvt });
-    } else if (status !== 'DISPATCHED') {
+    } else if (status !== "DISPATCHED") {
       failedDispatch.push({ row: rowNum, studentId: rawId, status });
     } else {
-      unresolvedRecipients.push({ row: rowNum, studentId: rawId, email, status: 'DISPATCHED_UNCONFIRMED' });
+      unresolvedRecipients.push({
+        row: rowNum,
+        studentId: rawId,
+        email,
+        status: "DISPATCHED_UNCONFIRMED",
+      });
     }
 
-    digestParts.push(JSON.stringify([
-      normalizeId_(rawId),
-      email,
-      fullName,
-      token,
-      status,
-      lastSentToken,
-      lastSentId,
-      proto,
-      passEvt,
-      attemptNum,
-      dispatchedAt,
-      lastError
-    ]));
+    digestParts.push(
+      JSON.stringify([
+        normalizeId_(rawId),
+        email,
+        fullName,
+        token,
+        status,
+        lastSentToken,
+        lastSentId,
+        proto,
+        passEvt,
+        attemptNum,
+        dispatchedAt,
+        lastError,
+      ]),
+    );
   }
 
   const invalidRecords = [...audit.invalidEmails, ...audit.missingNames];
-  const readyToAcknowledge = (
+  const readyToAcknowledge =
     eligibleCount > 0 &&
     audit.duplicateIds.length === 0 &&
     invalidRecords.length === 0 &&
     missingIssuance.length === 0 &&
-    failedDispatch.length === 0
-  );
-  const digest = sha256HexPrefix_(digestParts.join('\n'), 32);
+    failedDispatch.length === 0;
+  const digest = sha256HexPrefix_(digestParts.join("\n"), 32);
 
   return {
     targetId,
@@ -1537,7 +1946,7 @@ function evaluateTransitionReadiness_(ss, cfg, targetId) {
     failedDispatch,
     unresolvedRecipients,
     readyToAcknowledge,
-    digest
+    digest,
   };
 }
 
@@ -1545,7 +1954,10 @@ function reconcileTargetEventDistribution() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const cfg = getConfig_();
   requireSecureConfig_(cfg);
-  const targetId = validateV2Field_(cfg.TARGET_EVENT_ID || '', 'TARGET_EVENT_ID');
+  const targetId = validateV2Field_(
+    cfg.TARGET_EVENT_ID || "",
+    "TARGET_EVENT_ID",
+  );
   return evaluateTransitionReadiness_(ss, cfg, targetId);
 }
 
@@ -1553,15 +1965,25 @@ function acknowledgeTargetDistribution(expectedDigest) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const cfg = getConfig_();
   requireSecureConfig_(cfg);
-  const targetId = validateV2Field_(cfg.TARGET_EVENT_ID || '', 'TARGET_EVENT_ID');
+  const targetId = validateV2Field_(
+    cfg.TARGET_EVENT_ID || "",
+    "TARGET_EVENT_ID",
+  );
   const report = evaluateTransitionReadiness_(ss, cfg, targetId);
   if (!report.readyToAcknowledge) {
-    throw new Error('Roster is not ready for distribution acknowledgement (fix duplicates, invalid records, missing issuance, or failed dispatches first).');
+    throw new Error(
+      "Roster is not ready for distribution acknowledgement (fix duplicates, invalid records, missing issuance, or failed dispatches first).",
+    );
   }
   if (expectedDigest && String(expectedDigest).trim() !== report.digest) {
-    throw new Error('Distribution state changed since reconciliation report was generated; re-run reconciliation.');
+    throw new Error(
+      "Distribution state changed since reconciliation report was generated; re-run reconciliation.",
+    );
   }
-  PropertiesService.getScriptProperties().setProperty('TRANSITION_RECON_ACK', `${targetId}|${report.digest}`);
+  PropertiesService.getScriptProperties().setProperty(
+    "TRANSITION_RECON_ACK",
+    `${targetId}|${report.digest}`,
+  );
   return { ok: true, targetId, digest: report.digest };
 }
 
@@ -1578,17 +2000,30 @@ function transitionToTargetEvent() {
   const cfg = getConfig_();
   requireSecureConfig_(cfg);
 
-  const targetId = validateV2Field_(props.getProperty('TARGET_EVENT_ID') || '', 'TARGET_EVENT_ID');
-  if (targetId === 'DEFAULT') {
-    throw new Error('TARGET_EVENT_ID cannot be DEFAULT.');
+  const targetId = validateV2Field_(
+    props.getProperty("TARGET_EVENT_ID") || "",
+    "TARGET_EVENT_ID",
+  );
+  if (targetId === "DEFAULT") {
+    throw new Error("TARGET_EVENT_ID cannot be DEFAULT.");
   }
 
-  const isPending = String(props.getProperty('EVENT_TRANSITION_PENDING') || '').toUpperCase() === 'TRUE';
-  const isRetired = String(props.getProperty('V1_COMPAT_RETIRED') || '').toUpperCase() === 'TRUE';
+  const isPending =
+    String(
+      props.getProperty("EVENT_TRANSITION_PENDING") || "",
+    ).toUpperCase() === "TRUE";
+  const isRetired =
+    String(props.getProperty("V1_COMPAT_RETIRED") || "").toUpperCase() ===
+    "TRUE";
 
   // Post-Step-7 idempotency guard: completed transition returns deterministically without requiring TRANSITION_RECON_ACK
   if (cfg.EVENT_ID === targetId && isRetired && !isPending) {
-    return { ok: true, alreadyCompleted: true, activeEventId: targetId, v1Retired: true };
+    return {
+      ok: true,
+      alreadyCompleted: true,
+      activeEventId: targetId,
+      v1Retired: true,
+    };
   }
 
   // Step 2: Fail-closed readiness & distribution acknowledgement BEFORE setting pending/retired
@@ -1597,48 +2032,62 @@ function transitionToTargetEvent() {
   if (!resumingPostRetirement) {
     const report = evaluateTransitionReadiness_(ss, cfg, targetId);
     if (!report.readyToAcknowledge) {
-      throw new Error(`Transition readiness failed: missingIssuance=${report.missingIssuance.length}, failedDispatch=${report.failedDispatch.length}, duplicates=${report.duplicates.length}, invalid=${report.invalidRecords.length}`);
+      throw new Error(
+        `Transition readiness failed: missingIssuance=${report.missingIssuance.length}, failedDispatch=${report.failedDispatch.length}, duplicates=${report.duplicates.length}, invalid=${report.invalidRecords.length}`,
+      );
     }
-    const ack = String(props.getProperty('TRANSITION_RECON_ACK') || '');
+    const ack = String(props.getProperty("TRANSITION_RECON_ACK") || "");
     if (ack !== `${targetId}|${report.digest}`) {
-      throw new Error('Operator distribution reconciliation acknowledgement is missing or invalidated by Roster changes.');
+      throw new Error(
+        "Operator distribution reconciliation acknowledgement is missing or invalidated by Roster changes.",
+      );
     }
   }
 
   // Step 3: Persist pending state
-  props.setProperty('EVENT_TRANSITION_PENDING', 'TRUE');
+  props.setProperty("EVENT_TRANSITION_PENDING", "TRUE");
 
   // Step 4: Irreversibly retire v1 compatibility
-  props.setProperty('V1_COMPAT_RETIRED', 'TRUE');
+  props.setProperty("V1_COMPAT_RETIRED", "TRUE");
 
   // Step 5: Activate target by updating Config.EVENT_ID
-  const configSheet = ss.getSheetByName('Config');
-  if (!configSheet) throw new Error('Missing Config tab.');
+  const configSheet = ss.getSheetByName("Config");
+  if (!configSheet) throw new Error("Missing Config tab.");
   const rows = configSheet.getDataRange().getValues();
   let updated = false;
   for (let i = 1; i < rows.length; i++) {
-    if (String(rows[i][0] || '').trim() === 'EVENT_ID') {
+    if (String(rows[i][0] || "").trim() === "EVENT_ID") {
       configSheet.getRange(i + 1, 2).setValue(targetId);
       updated = true;
       break;
     }
   }
   if (!updated) {
-    configSheet.getRange(configSheet.getLastRow() + 1, 1, 1, 3).setValues([['EVENT_ID', targetId, 'Active event ID']]);
+    configSheet
+      .getRange(configSheet.getLastRow() + 1, 1, 1, 3)
+      .setValues([["EVENT_ID", targetId, "Active event ID"]]);
   }
 
   // Step 6: Self-verify target v2 signature acceptance & v1 rejection
   const afterCfg = getConfig_();
   if (afterCfg.EVENT_ID !== targetId || !afterCfg.V1_COMPAT_RETIRED) {
-    throw new Error('Transition verification failed; EVENT_TRANSITION_PENDING retained.');
+    throw new Error(
+      "Transition verification failed; EVENT_TRANSITION_PENDING retained.",
+    );
   }
-  const probeSig = createV2Signature_(targetId, 'PROBE001', afterCfg.SECRET_SALT);
-  if (!verifyV2Signature_(targetId, 'PROBE001', probeSig, afterCfg)) {
-    throw new Error('Target v2 self-verification failed; EVENT_TRANSITION_PENDING retained.');
+  const probeSig = createV2Signature_(
+    targetId,
+    "PROBE001",
+    afterCfg.SECRET_SALT,
+  );
+  if (!verifyV2Signature_(targetId, "PROBE001", probeSig, afterCfg)) {
+    throw new Error(
+      "Target v2 self-verification failed; EVENT_TRANSITION_PENDING retained.",
+    );
   }
 
   // Step 7: Clear pending state & ack only after successful verification
-  props.deleteProperty('EVENT_TRANSITION_PENDING');
-  props.deleteProperty('TRANSITION_RECON_ACK');
+  props.deleteProperty("EVENT_TRANSITION_PENDING");
+  props.deleteProperty("TRANSITION_RECON_ACK");
   return { ok: true, activeEventId: targetId, v1Retired: true };
 }
