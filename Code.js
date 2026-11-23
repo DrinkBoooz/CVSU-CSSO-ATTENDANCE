@@ -1517,9 +1517,23 @@ function setupRegistrationFormAndTrigger() {
 
     const idValidation = FormApp.createTextValidation()
       .setHelpText(
-        "Enter a valid Student ID (4-20 letters, numbers, or dashes, e.g. 202300328).",
+        "Enter a valid Student ID (e.g. 202300328). Letters, numbers, and optional dash only — no spaces.",
       )
-      .requireTextMatchesPattern("^[A-Za-z0-9\\-]{4,20}$")
+      .requireTextMatchesPattern("^[A-Za-z0-9]{4,15}(-[A-Za-z0-9]{1,8})?$")
+      .build();
+
+    const nameValidation = FormApp.createTextValidation()
+      .setHelpText(
+        "Enter your full name (3-80 characters, e.g. Dela Cruz, Juan M.). Letters, spaces, commas, periods, and hyphens only.",
+      )
+      .requireTextMatchesPattern("^[A-Za-z\\u00C0-\\u00FF][A-Za-z\\u00C0-\\u00FF .,'\\-]{2,79}$")
+      .build();
+
+    const sectionValidation = FormApp.createTextValidation()
+      .setHelpText(
+        "Enter your Course & Section (e.g. BSCS 3-1, BSCS 4-4, or BSCS-3A).",
+      )
+      .requireTextMatchesPattern("^[A-Za-z]{2,10}[\\s\\-]?[1-5][\\s\\-]?[A-Za-z0-9]{1,3}$")
       .build();
 
     form
@@ -1533,13 +1547,15 @@ function setupRegistrationFormAndTrigger() {
       .addTextItem()
       .setTitle("Full Name")
       .setHelpText("Example: Dela Cruz, Juan M.")
-      .setRequired(true);
+      .setRequired(true)
+      .setValidation(nameValidation);
 
     form
       .addTextItem()
       .setTitle("Section")
       .setHelpText("Example: BSCS 3-1")
-      .setRequired(true);
+      .setRequired(true)
+      .setValidation(sectionValidation);
 
     form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
     form.setConfirmationMessage(
