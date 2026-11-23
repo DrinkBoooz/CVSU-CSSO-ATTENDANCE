@@ -138,6 +138,11 @@
         <span>Event: <span id="eventIdBadge" class="badge">DEFAULT</span></span>
         <span>Accepted: <strong id="scanCount">0</strong></span>
       </div>
+      <div class="meta-row" style="align-items:center; margin-top:-4px;">
+        <span id="syncBadge" style="font-size:12px; color:#34d399;">Sync: Loading snapshot...</span>
+        <button id="syncNowBtn" class="secondary small-btn" type="button" onclick="flushScanQueue(true)">Sync Now</button>
+      </div>
+      <div id="syncAlertNote" class="error-text" style="display:none; margin-bottom:8px;"></div>
 
       <label for="stageSelect">
         Active Checkpoint Stage
@@ -178,9 +183,13 @@
   const API_URL = new URLSearchParams(window.location.search).get('api') || DEFAULT_API_URL;
   const SESSION_KEY = 'csso_session_token';
   const LOCAL_SEEN_KEY = 'csso_local_seen_v1';
+  const SCAN_QUEUE_KEY = 'csso_scan_queue_v1';
+  const STAGE_BITS = { 'Check-In': 1, 'Mid-Event': 2, 'Check-Out': 4 };
   const CAMERA_COOLDOWN_MS = 4000;
   const FETCH_TIMEOUT_MS = 15000;
   const KEEP_WARM_INTERVAL_MS = 240000; // 4 minutes (prevents Apps Script V8 cold starts)
+  const SYNC_INTERVAL_MS = 5000; // 5-second background batch sync
+  const SYNC_BATCH_THRESHOLD = 10;
 
   let html5QrCode = null;
   let isProcessing = false;
@@ -188,11 +197,200 @@
   let sessionToken = '';
   let activeEventId = 'DEFAULT';
   let localSeen = {};
+  let scanQueue = [];
+  let isSyncing = false;
+  let snapshotReady = false;
+  let snapshotRoster = {};
+  let snapshotSeen = {};
+  let snapshotEnforceOrder = false;
+  let snapshotV1Retired = false;
+  let snapshotV1CompatEventId = 'DEFAULT';
+  let snapshotLockedStage = 'AUTO';
+  let syncAlerts = 0;
   let lastCameraPayload = '';
   let lastCameraTime = 0;
   let acceptedCount = 0;
   let audioCtx = null;
   let keepWarmTimer = null;
+  let syncTimer = null;
+
+  function normalizeIdLocal(id) {
+    return String(id || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  function loadScanQueue() {
+    try {
+      const raw = localStorage.getItem(SCAN_QUEUE_KEY);
+      scanQueue = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(scanQueue)) scanQueue = [];
+    } catch (e) {
+      scanQueue = [];
+    }
+    updateSyncUI();
+  }
+
+  function saveScanQueue() {
+    try { localStorage.setItem(SCAN_QUEUE_KEY, JSON.stringify(scanQueue)); } catch (e) {}
+    updateSyncUI();
+  }
+
+  function updateSyncUI() {
+    const badge = document.getElementById('syncBadge');
+    const btn = document.getElementById('syncNowBtn');
+    if (!badge) return;
+    const pending = scanQueue.length;
+    if (isSyncing) {
+      badge.style.color = '#fbbf24';
+      badge.textContent = `Syncing ${pending} scan(s)...`;
+    } else if (pending > 0) {
+      badge.style.color = navigator.onLine === false ? '#94a3b8' : '#fbbf24';
+      badge.textContent = navigator.onLine === false
+        ? `Offline (${pending} queued)`
+        : `Instant Mode • Pending: ${pending}`;
+    } else if (snapshotReady) {
+      badge.style.color = '#34d399';
+      badge.textContent = `Instant Mode • Synced ✓ (${Object.keys(snapshotRoster).length} roster)`;
+    } else {
+      badge.style.color = '#94a3b8';
+      badge.textContent = 'Online Mode (loading snapshot...)';
+    }
+    if (btn) btn.disabled = isSyncing || pending === 0;
+  }
+
+  async function loadSnapshot() {
+    if (!sessionToken) return;
+    try {
+      const snap = await apiCall({ action: 'snapshot', sessionToken });
+      if (snap && snap.ok) {
+        snapshotRoster = snap.roster || {};
+        snapshotSeen = snap.seen || {};
+        snapshotEnforceOrder = !!snap.enforceStageOrder;
+        snapshotV1Retired = !!snap.v1Retired;
+        snapshotV1CompatEventId = snap.v1CompatEventId || 'DEFAULT';
+        snapshotLockedStage = snap.lockedStage || 'AUTO';
+        activeEventId = snap.eventId || activeEventId;
+        snapshotReady = true;
+        updateSyncUI();
+      }
+    } catch (e) {
+      updateSyncUI();
+    }
+  }
+
+  function startSyncLoop() {
+    if (syncTimer) return;
+    syncTimer = setInterval(() => {
+      if (sessionToken && scanQueue.length > 0 && !isSyncing && navigator.onLine !== false) {
+        flushScanQueue(false);
+      }
+    }, SYNC_INTERVAL_MS);
+  }
+
+  function stopSyncLoop() {
+    if (syncTimer) {
+      clearInterval(syncTimer);
+      syncTimer = null;
+    }
+  }
+
+  async function flushScanQueue(manualTrigger) {
+    if (!sessionToken || isSyncing || scanQueue.length === 0) return;
+    isSyncing = true;
+    updateSyncUI();
+    const batch = scanQueue.slice(0, 50);
+    const batchIds = new Set(batch.map(x => x.clientId));
+    try {
+      const res = await apiCall({ action: 'scanBatch', sessionToken, scans: batch });
+      if (res && res.status === 'UNAUTHORIZED') {
+        isSyncing = false;
+        updateSyncUI();
+        returnToPinScreen(res.message || 'Session expired. Log in again to sync queued scans.');
+        return;
+      }
+      if (res && res.ok) {
+        scanQueue = scanQueue.filter(x => !batchIds.has(x.clientId));
+        saveScanQueue();
+        if (res.seen) snapshotSeen = res.seen;
+        const rejected = (res.results || []).filter(r => r.status && r.status !== 'OK');
+        if (rejected.length > 0) {
+          syncAlerts += rejected.length;
+          const alertEl = document.getElementById('syncAlertNote');
+          if (alertEl) {
+            alertEl.style.display = 'block';
+            const last = rejected[rejected.length - 1];
+            alertEl.textContent = `Sync notice (${syncAlerts}): ${last.studentId || 'Scan'} -> ${last.status}`;
+          }
+        }
+      }
+    } catch (err) {
+      if (manualTrigger) {
+        const alertEl = document.getElementById('syncAlertNote');
+        if (alertEl) {
+          alertEl.style.display = 'block';
+          alertEl.textContent = 'Sync delayed (offline/network). Scans remain safely queued.';
+        }
+      }
+    } finally {
+      isSyncing = false;
+      updateSyncUI();
+    }
+  }
+
+  window.addEventListener('online', () => {
+    updateSyncUI();
+    if (sessionToken && scanQueue.length > 0) flushScanQueue(false);
+  });
+  window.addEventListener('offline', () => updateSyncUI());
+
+  function validateScanLocally(payloadText, stage) {
+    if (snapshotLockedStage && snapshotLockedStage !== 'AUTO' && stage !== snapshotLockedStage) {
+      return { ok: false, status: 'REJECTED_STAGE_LOCKED', message: `Scanner is locked to ${snapshotLockedStage}.` };
+    }
+    const raw = String(payloadText || '');
+    const parts = raw.split('|');
+    let rawId = '';
+    if (parts[0] === 'v2') {
+      if (parts.length !== 4 || !parts[1] || !parts[2] || !parts[3]) {
+        return { ok: false, status: 'REJECTED_MALFORMED', message: 'Malformed v2 QR payload.' };
+      }
+      if (parts[1] !== activeEventId) {
+        return { ok: false, status: 'REJECTED_WRONG_EVENT', message: `Pass belongs to event "${parts[1]}", not "${activeEventId}".` };
+      }
+      rawId = parts[2];
+    } else {
+      if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+        return { ok: false, status: 'REJECTED_MALFORMED', message: 'Malformed QR payload.' };
+      }
+      if (snapshotV1Retired) {
+        return { ok: false, status: 'REJECTED_V1_RETIRED', message: 'Legacy v1 passes have been permanently retired.' };
+      }
+      if (activeEventId !== snapshotV1CompatEventId) {
+        return { ok: false, status: 'REJECTED_WRONG_EVENT', message: `Legacy v1 passes are only valid for ${snapshotV1CompatEventId}.` };
+      }
+      rawId = parts[0].trim().toUpperCase();
+    }
+
+    const normId = normalizeIdLocal(rawId);
+    const tuple = snapshotRoster[normId];
+    if (!tuple) {
+      return { ok: false, fallbackOnline: true }; // Walk-in student not in snapshot -> verify live online
+    }
+    const [studentId, fullName, section] = tuple;
+    const mask = snapshotSeen[normId] || 0;
+    const bit = STAGE_BITS[stage] || 0;
+    if (mask & bit) {
+      return { ok: false, status: 'DUPLICATE', studentId, fullName, section, message: `Already scanned for ${stage}.` };
+    }
+    if (snapshotEnforceOrder) {
+      if (stage === 'Mid-Event' && !(mask & STAGE_BITS['Check-In'])) {
+        return { ok: false, status: 'REJECTED_STAGE_ORDER', studentId, fullName, message: 'Must complete Check-In before Mid-Event.' };
+      }
+      if (stage === 'Check-Out' && !(mask & STAGE_BITS['Mid-Event'])) {
+        return { ok: false, status: 'REJECTED_STAGE_ORDER', studentId, fullName, message: 'Must complete Mid-Event before Check-Out.' };
+      }
+    }
+    return { ok: true, normId, studentId, fullName, section, bit };
+  }
 
   function loadLocalSeen() {
     try {
@@ -289,8 +487,12 @@
 
   function applyScannerState(res) {
     startKeepWarm();
+    startSyncLoop();
     activeEventId = res.eventId || 'DEFAULT';
     loadLocalSeen();
+    loadScanQueue();
+    loadSnapshot();
+    if (scanQueue.length > 0) flushScanQueue(false);
     document.getElementById('pinScreen').style.display = 'none';
     document.getElementById('scannerScreen').style.display = 'block';
     document.getElementById('eventTitle').textContent = res.eventTitle || 'Event Scanner';
@@ -310,8 +512,10 @@
 
   function returnToPinScreen(msg) {
     stopKeepWarm();
+    stopSyncLoop();
     stopCamera();
     sessionToken = '';
+    snapshotReady = false;
     localSeen = {};
     try {
       sessionStorage.removeItem(SESSION_KEY);
@@ -323,7 +527,14 @@
     document.getElementById('pinError').textContent = msg || '';
   }
 
-  function logoutScanner() {
+  async function logoutScanner() {
+    if (scanQueue.length > 0) {
+      await flushScanQueue(true);
+      if (scanQueue.length > 0) {
+        const proceed = confirm(`${scanQueue.length} scan(s) are still queued offline and will remain saved on this device until you log back in. Log out anyway?`);
+        if (!proceed) return;
+      }
+    }
     returnToPinScreen('Logged out.');
   }
 
@@ -457,7 +668,44 @@
       statusEl.textContent = (html5QrCode && html5QrCode.isScanning) ? 'Scanning active.' : 'Ready.';
     };
 
-    // Instant (<5ms) O(1) local duplicate short-circuit for camera scans already confirmed in this session
+    // Option A: Instant (<10ms) Offline-First Batch Mode when snapshot is loaded
+    if (snapshotReady) {
+      const check = validateScanLocally(payloadText, stage);
+      if (!check.fallbackOnline) {
+        if (check.ok) {
+          snapshotSeen[check.normId] = (snapshotSeen[check.normId] || 0) | check.bit;
+          const nowIso = new Date().toISOString();
+          const nowTime = new Date().toTimeString().slice(0, 8);
+          scanQueue.push({
+            clientId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            payload: payloadText,
+            stage,
+            scannedAt: nowIso
+          });
+          saveScanQueue();
+          rememberLocalSeen(activeEventId, stage, payloadText, check);
+          showResult({
+            status: 'OK',
+            studentId: check.studentId,
+            fullName: check.fullName,
+            section: check.section,
+            stage,
+            time: `${nowTime} • queued`
+          });
+          if (scanQueue.length >= SYNC_BATCH_THRESHOLD && !isSyncing) {
+            flushScanQueue(false);
+          }
+          setTimeout(resetReady, 250);
+          return;
+        } else {
+          showResult(check);
+          setTimeout(resetReady, 250);
+          return;
+        }
+      }
+    }
+
+    // Instant (<5ms) O(1) local duplicate short-circuit for online fallback mode
     const localKey = `${activeEventId}|${stage}|${payloadText}`;
     if (!fromManual && localSeen[localKey]) {
       const hit = localSeen[localKey];

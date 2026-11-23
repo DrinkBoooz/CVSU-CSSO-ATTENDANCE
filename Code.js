@@ -12,7 +12,7 @@ const ROSTER_CACHE_TTL_SEC = 300; // 5 minutes
 const DEDUPE_CACHE_TTL_SEC = 3600; // 1 hour (write-through optimization only; Attendance Log is authoritative)
 const EVENT_INDEX_CACHE_PREFIX = "evt_idx_v1_";
 const EMAIL_TIME_BUDGET_MS = 270000; // 4.5 minutes
-const APP_BUILD_VERSION = "2026.11.24-phase3-o1";
+const APP_BUILD_VERSION = "2026.11.24-phase4-batch";
 
 /**
  * Reads key-value configuration from ScriptProperties (single batched RPC)
@@ -349,8 +349,14 @@ function doPost(e) {
     if (action === "state") {
       return jsonOut(getScannerState(body.sessionToken));
     }
+    if (action === "snapshot") {
+      return jsonOut(getScannerSnapshot(body.sessionToken));
+    }
     if (action === "scan") {
       return jsonOut(recordScan(body.sessionToken, body.payload, body.stage));
+    }
+    if (action === "scanBatch") {
+      return jsonOut(recordScanBatch(body.sessionToken, body.scans));
     }
     return jsonOut({
       ok: false,
@@ -962,6 +968,414 @@ function recordScan(sessionToken, payloadStr, stage) {
       eventId: cfg.EVENT_ID,
       time: Utilities.formatDate(now, Session.getScriptTimeZone(), "HH:mm:ss"),
     };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Returns a compact, secret-free snapshot (Roster tuples + seen stage bitmasks)
+ * for instant (<10ms) offline-first client-side pre-validation.
+ * Never exposes SECRET_SALT, USHER_PIN, tokens, or participant emails.
+ */
+function getScannerSnapshot(sessionToken) {
+  const cfg = getConfig_();
+  const sess = verifySessionToken_(sessionToken, cfg);
+  if (!sess.ok) {
+    return {
+      ok: false,
+      status: "UNAUTHORIZED",
+      message: "Session expired or invalid. Please log in again.",
+    };
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const rosterMap = getRosterMap_(ss, false);
+  if (!rosterMap) {
+    return { ok: false, status: "ERROR", message: "Missing Roster sheet." };
+  }
+
+  const compactRoster = {};
+  const keys = Object.keys(rosterMap);
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i];
+    const rec = rosterMap[k];
+    compactRoster[k] = [rec.studentId, rec.fullName, rec.section];
+  }
+
+  const logSheet = ss.getSheetByName("Attendance Log");
+  const seen = logSheet ? getEventSeenIndex_(cfg.EVENT_ID, logSheet) : {};
+
+  return {
+    ok: true,
+    usherLabel: sess.usherLabel,
+    eventTitle: cfg.EVENT_TITLE,
+    eventId: cfg.EVENT_ID,
+    lockedStage: cfg.LOCKED_STAGE,
+    enforceStageOrder: !!cfg.ENFORCE_STAGE_ORDER,
+    v1Retired: !!cfg.V1_COMPAT_RETIRED,
+    v1CompatEventId: cfg.V1_COMPAT_EVENT_ID || "DEFAULT",
+    roster: compactRoster,
+    seen,
+  };
+}
+
+/**
+ * Processes up to 50 queued offline/instant scans in a single ScriptLock + single
+ * setValues() batch write. Performs full authoritative server-side HMAC/SHA-256
+ * verification, Roster membership, stage-lock, stage-order, and dedupe checks.
+ */
+function recordScanBatch(sessionToken, scans) {
+  const cfg = getConfig_();
+  const sess = verifySessionToken_(sessionToken, cfg);
+  if (!sess.ok) {
+    return {
+      ok: false,
+      status: "UNAUTHORIZED",
+      message: "Session expired or invalid. Please log in again.",
+    };
+  }
+
+  if (!Array.isArray(scans) || scans.length === 0) {
+    return { ok: true, eventId: cfg.EVENT_ID, results: [] };
+  }
+
+  const batch = scans.slice(0, 50);
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const tz = Session.getScriptTimeZone();
+
+  // Pre-validate every scan's syntax, signature, event binding & Roster OUTSIDE ScriptLock
+  const prepared = batch.map((item) => {
+    const clientId = String((item && item.clientId) || "");
+    const payloadStr = String((item && item.payload) || "");
+    const cleanStage = String((item && item.stage) || "").trim();
+    let scanTime = new Date();
+    if (item && item.scannedAt) {
+      const parsed = new Date(item.scannedAt);
+      if (!isNaN(parsed.getTime())) scanTime = parsed;
+    }
+
+    if (!VALID_STAGES.includes(cleanStage)) {
+      return {
+        clientId,
+        cleanStage,
+        scanTime,
+        preRejected: true,
+        logRow: null,
+        result: { clientId, status: "ERROR", message: "Invalid checkpoint stage." },
+      };
+    }
+
+    if (
+      cfg.LOCKED_STAGE &&
+      cfg.LOCKED_STAGE !== "AUTO" &&
+      cleanStage !== cfg.LOCKED_STAGE
+    ) {
+      const hintParts = payloadStr.trim().split("|");
+      const rawHint = (
+        hintParts[0] === "v2" && hintParts.length >= 3
+          ? hintParts[2]
+          : hintParts[0]
+      )
+        .trim()
+        .toUpperCase();
+      return {
+        clientId,
+        cleanStage,
+        scanTime,
+        preRejected: true,
+        logRow: [
+          scanTime,
+          cleanStage,
+          safeCell_(rawHint),
+          "",
+          "",
+          safeCell_(sess.usherLabel),
+          "REJECTED_STAGE_LOCKED",
+          safeCell_(cfg.EVENT_ID),
+        ],
+        result: {
+          clientId,
+          status: "REJECTED_STAGE_LOCKED",
+          studentId: rawHint,
+          stage: cleanStage,
+          message: `Scanner is locked to ${cfg.LOCKED_STAGE}.`,
+        },
+      };
+    }
+
+    const parts = payloadStr.split("|");
+    let rawId = "";
+    let normId = "";
+    let rejectStatus = "";
+    let rejectMsg = "";
+
+    if (parts[0] === "v2") {
+      if (parts.length !== 4) {
+        rawId = payloadStr.trim().substring(0, 40);
+        rejectStatus = "REJECTED_MALFORMED";
+        rejectMsg = "Malformed v2 QR payload.";
+      } else {
+        const [, evId, sid, hmac] = parts;
+        try {
+          validateV2Field_(evId, "EVENT_ID");
+          validateV2Field_(sid, "STUDENT_ID");
+        } catch (fieldErr) {
+          rawId = payloadStr.trim().substring(0, 40);
+          rejectStatus = "REJECTED_MALFORMED";
+          rejectMsg = fieldErr.message;
+        }
+        if (!rejectStatus && (!hmac || hmac !== hmac.trim())) {
+          rawId = sid;
+          rejectStatus = "REJECTED_MALFORMED";
+          rejectMsg = "Malformed v2 HMAC.";
+        }
+        if (!rejectStatus) {
+          rawId = sid;
+          normId = normalizeId_(rawId);
+          if (evId !== cfg.EVENT_ID) {
+            rejectStatus = "REJECTED_WRONG_EVENT";
+            rejectMsg = `Pass belongs to event "${evId}", not "${cfg.EVENT_ID}".`;
+          } else if (!verifyV2Signature_(evId, sid, hmac, cfg)) {
+            rejectStatus = "REJECTED_FORGED";
+            rejectMsg = "Forged or tampered v2 QR token.";
+          }
+        }
+      }
+    } else {
+      if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+        rawId = payloadStr.trim().substring(0, 40);
+        rejectStatus = "REJECTED_MALFORMED";
+        rejectMsg = "Malformed QR payload.";
+      } else {
+        rawId = parts[0].trim().toUpperCase();
+        const scannedToken = parts[1].trim().toUpperCase();
+        normId = normalizeId_(rawId);
+        const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
+        if (cfg.V1_COMPAT_RETIRED) {
+          rejectStatus = "REJECTED_V1_RETIRED";
+          rejectMsg = "Legacy v1 passes have been permanently retired.";
+        } else if (cfg.EVENT_ID !== compatEventId) {
+          rejectStatus = "REJECTED_WRONG_EVENT";
+          rejectMsg = `Legacy v1 passes are only valid for ${compatEventId}.`;
+        } else if (!verifyLegacyV1Signature_(rawId, scannedToken, cfg)) {
+          rejectStatus = "REJECTED_FORGED";
+          rejectMsg = "Forged or tampered QR token.";
+        }
+      }
+    }
+
+    if (rejectStatus) {
+      return {
+        clientId,
+        cleanStage,
+        scanTime,
+        preRejected: true,
+        logRow: [
+          scanTime,
+          cleanStage,
+          safeCell_(rawId),
+          "",
+          "",
+          safeCell_(sess.usherLabel),
+          rejectStatus,
+          safeCell_(cfg.EVENT_ID),
+        ],
+        result: {
+          clientId,
+          status: rejectStatus,
+          studentId: rawId,
+          stage: cleanStage,
+          message: rejectMsg,
+        },
+      };
+    }
+
+    const rosterLookup = getRosterEntry_(ss, normId);
+    if (rosterLookup.missingSheet) {
+      return {
+        clientId,
+        cleanStage,
+        scanTime,
+        preRejected: true,
+        logRow: null,
+        result: { clientId, status: "ERROR", message: "Missing Roster sheet." },
+      };
+    }
+    if (!rosterLookup.record) {
+      return {
+        clientId,
+        cleanStage,
+        scanTime,
+        preRejected: true,
+        logRow: [
+          scanTime,
+          cleanStage,
+          safeCell_(rawId),
+          "",
+          "",
+          safeCell_(sess.usherLabel),
+          "REJECTED_NOT_IN_ROSTER",
+          safeCell_(cfg.EVENT_ID),
+        ],
+        result: {
+          clientId,
+          status: "REJECTED_NOT_IN_ROSTER",
+          studentId: rawId,
+          stage: cleanStage,
+          message: `Student ID ${rawId} not found in Roster.`,
+        },
+      };
+    }
+
+    return {
+      clientId,
+      cleanStage,
+      scanTime,
+      preRejected: false,
+      normId,
+      studentRecord: rosterLookup.record,
+    };
+  });
+
+  // Single ScriptLock + single batch setValues() for all rows in the batch
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return {
+      ok: false,
+      status: "ERROR",
+      message: "Scanner busy. Batch will retry automatically.",
+    };
+  }
+
+  try {
+    const logSheet = ss.getSheetByName("Attendance Log");
+    if (!logSheet) {
+      return {
+        ok: false,
+        status: "ERROR",
+        message: "Missing Attendance Log sheet.",
+      };
+    }
+
+    const seenIndex = getEventSeenIndex_(cfg.EVENT_ID, logSheet);
+    let seenDirty = false;
+    const rowsToWrite = [];
+    const results = [];
+
+    for (let i = 0; i < prepared.length; i++) {
+      const p = prepared[i];
+      if (p.preRejected) {
+        if (p.logRow) rowsToWrite.push(p.logRow);
+        results.push(p.result);
+        continue;
+      }
+
+      const rec = p.studentRecord;
+      const seenMask = seenIndex[p.normId] || 0;
+      const stageBit = STAGE_BITS[p.cleanStage] || 0;
+
+      if (seenMask & stageBit) {
+        rowsToWrite.push([
+          p.scanTime,
+          p.cleanStage,
+          safeCell_(rec.studentId),
+          safeCell_(rec.fullName),
+          safeCell_(rec.section),
+          safeCell_(sess.usherLabel),
+          "DUPLICATE",
+          safeCell_(cfg.EVENT_ID),
+        ]);
+        results.push({
+          clientId: p.clientId,
+          status: "DUPLICATE",
+          studentId: rec.studentId,
+          fullName: rec.fullName,
+          section: rec.section,
+          stage: p.cleanStage,
+          message: `Already scanned for ${p.cleanStage}.`,
+        });
+        continue;
+      }
+
+      if (cfg.ENFORCE_STAGE_ORDER) {
+        if (p.cleanStage === "Mid-Event" && !(seenMask & STAGE_BITS["Check-In"])) {
+          rowsToWrite.push([
+            p.scanTime,
+            p.cleanStage,
+            safeCell_(rec.studentId),
+            safeCell_(rec.fullName),
+            safeCell_(rec.section),
+            safeCell_(sess.usherLabel),
+            "REJECTED_STAGE_ORDER",
+            safeCell_(cfg.EVENT_ID),
+          ]);
+          results.push({
+            clientId: p.clientId,
+            status: "REJECTED_STAGE_ORDER",
+            studentId: rec.studentId,
+            fullName: rec.fullName,
+            stage: p.cleanStage,
+            message: "Must complete Check-In before Mid-Event.",
+          });
+          continue;
+        }
+        if (p.cleanStage === "Check-Out" && !(seenMask & STAGE_BITS["Mid-Event"])) {
+          rowsToWrite.push([
+            p.scanTime,
+            p.cleanStage,
+            safeCell_(rec.studentId),
+            safeCell_(rec.fullName),
+            safeCell_(rec.section),
+            safeCell_(sess.usherLabel),
+            "REJECTED_STAGE_ORDER",
+            safeCell_(cfg.EVENT_ID),
+          ]);
+          results.push({
+            clientId: p.clientId,
+            status: "REJECTED_STAGE_ORDER",
+            studentId: rec.studentId,
+            fullName: rec.fullName,
+            stage: p.cleanStage,
+            message: "Must complete Mid-Event before Check-Out.",
+          });
+          continue;
+        }
+      }
+
+      rowsToWrite.push([
+        p.scanTime,
+        p.cleanStage,
+        safeCell_(rec.studentId),
+        safeCell_(rec.fullName),
+        safeCell_(rec.section),
+        safeCell_(sess.usherLabel),
+        "ACCEPTED",
+        safeCell_(cfg.EVENT_ID),
+      ]);
+      seenIndex[p.normId] = seenMask | stageBit;
+      seenDirty = true;
+      results.push({
+        clientId: p.clientId,
+        status: "OK",
+        studentId: rec.studentId,
+        fullName: rec.fullName,
+        section: rec.section,
+        stage: p.cleanStage,
+        eventId: cfg.EVENT_ID,
+        time: Utilities.formatDate(p.scanTime, tz, "HH:mm:ss"),
+      });
+    }
+
+    if (rowsToWrite.length > 0) {
+      const nextRow = logSheet.getLastRow() + 1;
+      logSheet.getRange(nextRow, 1, rowsToWrite.length, 8).setValues(rowsToWrite);
+    }
+    if (seenDirty) {
+      putEventSeenIndex_(cfg.EVENT_ID, seenIndex);
+    }
+
+    return { ok: true, eventId: cfg.EVENT_ID, results, seen: seenIndex };
   } finally {
     lock.releaseLock();
   }
