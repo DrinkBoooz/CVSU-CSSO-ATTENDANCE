@@ -493,11 +493,12 @@ function sendQRPassesToSelectedRows() {
     SpreadsheetApp.getUi().alert('Select student rows (row 2 or below), not the header row.');
     return;
   }
-  return sendPasses_(indices, false);
+  return sendPasses_(indices, true);
 }
 
 /**
- * Shared quota-safe, lock-protected, batch-writing email sender.
+ * Shared quota-safe, lock-protected, row-shift-verified email sender using GmailApp.
+ * Sets Pass Status = 'DISPATCHED' (accepting legacy 'SENT' as already-dispatched).
  */
 function sendPasses_(targetRowIndices, requireConfirm) {
   const ui = SpreadsheetApp.getUi();
@@ -522,18 +523,20 @@ function sendPasses_(targetRowIndices, requireConfirm) {
       return { ok: true, sent: 0 };
     }
 
-    const data = rosterSheet.getRange(1, 1, lastRow, 6).getValues();
+    const totalCols = Math.max(12, rosterSheet.getLastColumn());
+    const data = rosterSheet.getRange(1, 1, lastRow, totalCols).getValues();
     const candidateIndices = targetRowIndices
       ? targetRowIndices.filter(i => i >= 1 && i < data.length)
       : Array.from({ length: data.length - 1 }, (_, k) => k + 1);
 
+    const isAlreadyDispatched = status => status === 'SENT' || status === 'DISPATCHED';
+
     const pendingIndices = candidateIndices.filter(i => {
-      const [rawId, email, , , , passStatus] = data[i];
-      const studentId = String(rawId || '').trim();
-      const cleanEmail = String(email || '').trim();
-      const status = String(passStatus || '').trim();
+      const studentId = String(data[i][0] || '').trim();
+      const cleanEmail = String(data[i][1] || '').trim();
+      const status = String(data[i][5] || '').trim();
       if (!studentId || !cleanEmail) return false;
-      return targetRowIndices ? true : status !== 'SENT';
+      return targetRowIndices ? true : !isAlreadyDispatched(status);
     });
 
     if (pendingIndices.length === 0) {
@@ -543,17 +546,32 @@ function sendPasses_(targetRowIndices, requireConfirm) {
 
     const initialQuota = MailApp.getRemainingDailyQuota();
     if (requireConfirm) {
+      const alreadyCount = pendingIndices.filter(i => isAlreadyDispatched(String(data[i][5] || '').trim())).length;
+      const resendNote = alreadyCount > 0 ? `\nAlready dispatched in selection: ${alreadyCount} (will be re-sent).` : '';
       const resp = ui.alert(
         'Confirm QR Pass Emailing',
-        `Ready to email ${pendingIndices.length} pending participant(s).\nRemaining daily email quota: ${initialQuota}.\n\nProceed?`,
+        `Ready to dispatch ${pendingIndices.length} participant(s) via GmailApp.${resendNote}\nRemaining daily email quota: ${initialQuota}.\n\nProceed?`,
         ui.ButtonSet.YES_NO
       );
       if (resp !== ui.Button.YES) return { ok: false, reason: 'CANCELLED' };
     }
 
+    const rowCount = data.length - 1;
+    const expectedNormIds = [];
     const efUpdates = [];
+    const hlUpdates = [];
+    const touchedSet = new Set();
+
     for (let i = 1; i < data.length; i++) {
-      efUpdates.push([data[i][4], data[i][5]]);
+      expectedNormIds.push(normalizeId_(data[i][0]));
+      efUpdates.push([data[i][4] || '', data[i][5] || '']);
+      hlUpdates.push([
+        data[i][7] || '',
+        data[i][8] || '',
+        data[i][9] || '',
+        data[i][10] || '',
+        data[i][11] || ''
+      ]);
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -572,60 +590,104 @@ function sendPasses_(targetRowIndices, requireConfirm) {
           break;
         }
 
-        const [rawId, email, fullName, section, existingToken] = data[i];
-        const studentId = String(rawId || '').trim().toUpperCase();
-        const cleanEmail = String(email || '').trim();
-        const token = String(existingToken || '').trim() || createSignature_(studentId, cfg.SECRET_SALT);
+        const studentId = String(data[i][0] || '').trim().toUpperCase();
+        const cleanEmail = String(data[i][1] || '').trim();
+        const fullName = data[i][2];
+        const section = data[i][3];
+        const token = createSignature_(studentId, cfg.SECRET_SALT);
+        const prevAttempts = Number(data[i][9]) || 0;
+        const attemptNum = prevAttempts + 1;
+
+        touchedSet.add(i - 1);
         efUpdates[i - 1][0] = token;
+        hlUpdates[i - 1][2] = attemptNum;
 
         if (!emailRegex.test(cleanEmail)) {
-          efUpdates[i - 1][1] = 'ERROR: Invalid email format';
+          efUpdates[i - 1][1] = 'INVALID_EMAIL';
+          hlUpdates[i - 1][4] = 'Invalid email format';
+          errors++;
+          continue;
+        }
+
+        const payload = `${studentId}|${token}`;
+        let qrBlob;
+        try {
+          qrBlob = generateQrPngBlob_(payload, `Pass_${studentId}.png`);
+        } catch (qrErr) {
+          efUpdates[i - 1][1] = 'QR_GEN_FAILED';
+          hlUpdates[i - 1][4] = String(qrErr && qrErr.message ? qrErr.message : qrErr).substring(0, 120);
           errors++;
           continue;
         }
 
         try {
-          const payload = `${studentId}|${token}`;
-          const qrUrl = `https://quickchart.io/qr?size=300&margin=2&text=${encodeURIComponent(payload)}`;
-          const qrBlob = UrlFetchApp.fetch(qrUrl).getBlob().setName(`Pass_${studentId}.png`);
+          const subject = `${cfg.EVENT_TITLE} - Your QR Attendance Pass`;
+          const plainBody = [
+            `${cfg.EVENT_TITLE}`,
+            `Participant: ${fullName || 'Participant'}`,
+            `Student ID: ${studentId}${section ? ' | ' + section : ''}`,
+            `Manual Pass Code: ${payload}`,
+            '',
+            'Bring your physical School ID. You must be scanned at Check-In, Mid-Event, and Check-Out to qualify.'
+          ].join('\n');
 
-          MailApp.sendEmail({
-            to: cleanEmail,
-            subject: `${cfg.EVENT_TITLE} - Your QR Attendance Pass`,
-            htmlBody: `
-              <div style="font-family: Arial, sans-serif; max-width: 420px; margin: 0 auto; border: 1px solid #d0d7de; border-radius: 10px; padding: 20px; text-align: center;">
-                <h2 style="margin: 0 0 8px 0;">${escapeHtml_(cfg.EVENT_TITLE)}</h2>
-                <p style="margin: 4px 0; font-size: 16px;"><strong>${escapeHtml_(fullName || 'Participant')}</strong></p>
-                <p style="margin: 4px 0 14px 0; color: #555;">ID: ${escapeHtml_(studentId)}${section ? ' | ' + escapeHtml_(section) : ''}</p>
-                <img src="cid:qrpass" alt="QR Pass" style="width: 240px; height: 240px;" />
-                <p style="margin: 10px 0 4px 0; font-size: 13px; color: #111;">
-                  Manual Pass Code: <code style="background:#f3f4f6; padding:3px 6px; border-radius:4px;">${escapeHtml_(payload)}</code>
-                </p>
-                <p style="margin-top: 10px; font-size: 12px; color: #444; line-height: 1.4;">
-                  Save a screenshot of this pass and bring your physical School ID.<br>
-                  You must be scanned at <strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong> to qualify.
-                </p>
-              </div>
-            `,
+          const htmlBody = `
+            <div style="font-family: Arial, sans-serif; max-width: 420px; margin: 0 auto; border: 1px solid #d0d7de; border-radius: 10px; padding: 20px; text-align: center;">
+              <h2 style="margin: 0 0 8px 0;">${escapeHtml_(cfg.EVENT_TITLE)}</h2>
+              <p style="margin: 4px 0; font-size: 16px;"><strong>${escapeHtml_(fullName || 'Participant')}</strong></p>
+              <p style="margin: 4px 0 14px 0; color: #555;">ID: ${escapeHtml_(studentId)}${section ? ' | ' + escapeHtml_(section) : ''}</p>
+              <img src="cid:qrpass" alt="QR Pass" style="width: 240px; height: 240px;" />
+              <p style="margin: 10px 0 4px 0; font-size: 13px; color: #111;">
+                Manual Pass Code: <code style="background:#f3f4f6; padding:3px 6px; border-radius:4px;">${escapeHtml_(payload)}</code>
+              </p>
+              <p style="margin-top: 10px; font-size: 12px; color: #444; line-height: 1.4;">
+                Save a screenshot of this pass and bring your physical School ID.<br>
+                You must be scanned at <strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong> to qualify.
+              </p>
+            </div>
+          `;
+
+          GmailApp.sendEmail(cleanEmail, subject, plainBody, {
+            htmlBody,
             inlineImages: { qrpass: qrBlob }
           });
 
-          efUpdates[i - 1][1] = 'SENT';
+          efUpdates[i - 1][1] = 'DISPATCHED';
+          hlUpdates[i - 1][0] = token;
+          hlUpdates[i - 1][1] = studentId;
+          hlUpdates[i - 1][3] = new Date().toISOString();
+          hlUpdates[i - 1][4] = '';
           sent++;
           Utilities.sleep(150);
         } catch (err) {
-          efUpdates[i - 1][1] = 'ERROR: ' + String(err && err.message ? err.message : err).substring(0, 120);
+          efUpdates[i - 1][1] = 'MAIL_API_ERROR';
+          hlUpdates[i - 1][4] = String(err && err.message ? err.message : err).substring(0, 120);
           errors++;
         }
       }
     } finally {
-      if (efUpdates.length > 0) {
-        rosterSheet.getRange(2, 5, efUpdates.length, 2).setValues(efUpdates);
+      if (rowCount > 0 && touchedSet.size > 0) {
+        const currentIds = rosterSheet.getRange(2, 1, rowCount, 1).getValues();
+        let shifted = false;
+        for (const idx of touchedSet) {
+          const curNorm = normalizeId_(currentIds[idx] ? currentIds[idx][0] : '');
+          if (curNorm !== expectedNormIds[idx]) {
+            shifted = true;
+            break;
+          }
+        }
+        if (shifted) {
+          stoppedReason = (stoppedReason ? stoppedReason + ' ' : '') +
+            'Roster rows shifted during send; batch write aborted to prevent Student ID mismatch.';
+        } else {
+          rosterSheet.getRange(2, 5, rowCount, 2).setValues(efUpdates);
+          rosterSheet.getRange(2, 8, rowCount, 5).setValues(hlUpdates);
+        }
       }
       invalidateRosterCache_();
     }
 
-    const summary = `Sent: ${sent}\nErrors: ${errors}` + (stoppedReason ? `\nNote: ${stoppedReason}` : '');
+    const summary = `Dispatched: ${sent}\nErrors: ${errors}` + (stoppedReason ? `\nNote: ${stoppedReason}` : '');
     ui.alert('QR Pass Email Summary', summary, ui.ButtonSet.OK);
     return { ok: true, sent, errors, stoppedReason };
   } finally {
@@ -835,7 +897,7 @@ function ensureConfigKeys_(ss) {
 function ensureSheetsAndHeaders_(ss) {
   const specs = [
     { name: 'Config', headers: ['Key', 'Value', 'Notes'] },
-    { name: 'Roster', headers: ['Student ID', 'Email', 'Full Name', 'Section', 'Token', 'Pass Status', 'QR Preview'] },
+    { name: 'Roster', headers: ['Student ID', 'Email', 'Full Name', 'Section', 'Token', 'Pass Status', 'QR Preview', 'Last Sent Token', 'Last Sent ID', 'Attempt #', 'Dispatched At', 'Last Error'] },
     { name: 'Attendance Log', headers: ['Timestamp', 'Stage', 'Student ID', 'Full Name', 'Section', 'Usher Label', 'Scan Status', 'Event ID'] },
     { name: 'Verified Attendance', headers: ['Student ID', 'Full Name', 'Section', 'Check-In', 'Mid-Event', 'Check-Out', 'Qualification', 'Stage Count'] }
   ];

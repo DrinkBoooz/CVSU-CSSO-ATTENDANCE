@@ -1,4 +1,5 @@
 # Clasp ignore configuration for non-Apps-Script assets
+node_modules/**
 tools/**
 skills/**
 skills-to-edit/**

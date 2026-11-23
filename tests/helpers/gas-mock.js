@@ -217,6 +217,7 @@ function loadCode(opts = {}) {
 
   let remainingQuota = opts.emailQuota !== undefined ? opts.emailQuota : 100;
   const sentEmails = [];
+  const gmailSentEmails = [];
   const failEmails = new Set(opts.failEmails || []);
   const MailApp = {
     getRemainingDailyQuota() { return remainingQuota; },
@@ -225,6 +226,22 @@ function loadCode(opts = {}) {
       if (failEmails.has(params.to)) throw new Error('Invalid email: ' + params.to);
       remainingQuota--;
       sentEmails.push(params);
+    }
+  };
+  const GmailApp = {
+    sendEmail(recipient, subject, body, options) {
+      if (remainingQuota <= 0) throw new Error('Service invoked too many times for one day: email.');
+      if (failEmails.has(recipient)) throw new Error('Invalid email: ' + recipient);
+      remainingQuota--;
+      const record = {
+        to: recipient,
+        subject,
+        body,
+        htmlBody: options && options.htmlBody ? options.htmlBody : '',
+        inlineImages: options && options.inlineImages ? options.inlineImages : {}
+      };
+      gmailSentEmails.push(record);
+      sentEmails.push(record);
     }
   };
 
@@ -244,9 +261,15 @@ function loadCode(opts = {}) {
       while (s.length % 4) s += '=';
       return Array.from(Buffer.from(s, 'base64'));
     },
-    newBlob(bytes) {
+    newBlob(bytes, contentType, name) {
+      const buf = Buffer.from(bytes.map(b => b & 0xff));
       return {
-        getDataAsString() { return Buffer.from(bytes).toString('utf8'); },
+        _bytes: buf,
+        _contentType: contentType || 'application/octet-stream',
+        name: name || 'blob',
+        getBytes() { return Array.from(buf, b => (b > 127 ? b - 256 : b)); },
+        getContentType() { return this._contentType; },
+        getDataAsString() { return buf.toString('utf8'); },
         setName(n) { this.name = n; return this; }
       };
     },
@@ -360,6 +383,7 @@ function loadCode(opts = {}) {
     CacheService: { getScriptCache: () => cache },
     Session: { getScriptTimeZone: () => 'Asia/Singapore' },
     MailApp,
+    GmailApp,
     UrlFetchApp,
     HtmlService,
     ContentService,
@@ -379,6 +403,10 @@ function loadCode(opts = {}) {
   };
 
   vm.createContext(context);
+  const qrPath = path.resolve(__dirname, '..', '..', 'QrEncoder.js');
+  if (fs.existsSync(qrPath)) {
+    vm.runInContext(fs.readFileSync(qrPath, 'utf8'), context, { filename: 'QrEncoder.js' });
+  }
   const codePath = path.resolve(__dirname, '..', '..', 'Code.js');
   const code = fs.readFileSync(codePath, 'utf8');
   vm.runInContext(code, context, { filename: 'Code.js' });
@@ -390,6 +418,7 @@ function loadCode(opts = {}) {
     cache,
     lock,
     sentEmails,
+    gmailSentEmails,
     uiAlerts,
     sleeps,
     triggers
