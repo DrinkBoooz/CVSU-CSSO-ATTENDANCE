@@ -1,0 +1,32 @@
+{
+  "name": "cvsu-csso-attendance",
+  "version": "1.0.0",
+  "description": "",
+  "main": "Code.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "node -c Code.js && node -c QrEncoder.js && node tests/crypto-migration.test.js && node tests/dopost.test.js && node tests/e2e-guard.test.js && node tests/email.test.js && node tests/qr-encoder.test.js && node tests/rebuild.test.js && node tests/record-scan.test.js && node tests/session-pin.test.js && node tests/signature.test.js && node tests/upgrades.test.js && node tests/browser/scanner.spec.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DrinkBoooz/CVSU-CSSO-ATTENDANCE.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/DrinkBoooz/CVSU-CSSO-ATTENDANCE/issues"
+  },
+  "homepage": "https://github.com/DrinkBoooz/CVSU-CSSO-ATTENDANCE#readme",
+  "devDependencies": {
+    "html5-qrcode": "^2.3.8",
+    "jsqr": "^1.4.0",
+    "playwright": "^1.65.1",
+    "pngjs": "^7.0.0",
+    "qrcode-generator": "^2.0.4"
+  }
+}

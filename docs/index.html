@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CvSU CSSO Usher QR Scanner</title>
+  <script src="./vendor/html5-qrcode.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #0f172a;
+      color: #f8fafc;
+    }
+    .box { max-width: 480px; margin: 0 auto; }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      padding: 18px;
+      margin-bottom: 14px;
+    }
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .badge {
+      display: inline-block;
+      background: #1d4ed8;
+      color: #dbeafe;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 999px;
+      letter-spacing: 0.4px;
+    }
+    .badge.locked { background: #92400e; color: #fef3c7; }
+    .meta-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 12px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+    select, input, button {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      border-radius: 10px;
+      border: 1px solid #334155;
+      margin-bottom: 12px;
+    }
+    input, select { background: #0f172a; color: #f8fafc; }
+    select:disabled { opacity: 0.7; cursor: not-allowed; }
+    button {
+      background: #2563eb;
+      color: #fff;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    button.secondary { background: #334155; }
+    button.secondary:hover { background: #475569; }
+    button.small-btn {
+      width: auto;
+      padding: 6px 12px;
+      font-size: 13px;
+      margin-bottom: 0;
+    }
+    .btn-row { display: flex; gap: 8px; }
+    .btn-row button { flex: 1; }
+    .manual-row { display: flex; gap: 8px; }
+    .manual-row input { flex: 1; margin-bottom: 0; }
+    .manual-row button { width: auto; padding: 0 18px; margin-bottom: 0; }
+    #reader {
+      width: 100%;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #000;
+      margin-top: 4px;
+    }
+    .result-banner {
+      display: none;
+      padding: 18px;
+      border-radius: 14px;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+    .res-ok { background: #065f46; border: 2px solid #34d399; }
+    .res-dup { background: #78350f; border: 2px solid #fbbf24; }
+    .res-bad { background: #7f1d1d; border: 2px solid #f87171; }
+    .big-name { font-size: 24px; font-weight: 800; margin: 6px 0; line-height: 1.2; }
+    .sub-info { font-size: 15px; opacity: 0.95; }
+    .error-text { color: #fca5a5; font-size: 14px; min-height: 18px; }
+    .status-note { font-size: 13px; color: #94a3b8; margin-top: 8px; }
+  </style>
+</head>
+<body>
+<div class="box">
+  <div id="pinScreen" class="card">
+    <h2 style="margin-top:0;">Usher Scanner Login</h2>
+    <form id="pinForm" onsubmit="unlockScanner(event)">
+      <label for="pinInput">Enter Usher PIN (6+ digits)</label>
+      <input id="pinInput" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit PIN" required />
+      <label for="usherNameInput">Usher Name / Gate</label>
+      <input id="usherNameInput" type="text" maxlength="40" placeholder="e.g., Gate A - Marco" />
+      <button id="unlockBtn" type="submit">Unlock Scanner</button>
+    </form>
+    <div id="pinError" class="error-text"></div>
+  </div>
+
+  <div id="scannerScreen" style="display:none;">
+    <div id="resultBanner" class="result-banner" role="status" aria-live="polite">
+      <div id="resTitle" style="font-size:14px; font-weight:bold; letter-spacing:1px;"></div>
+      <div id="resName" class="big-name"></div>
+      <div id="resSub" class="sub-info"></div>
+    </div>
+
+    <div class="card">
+      <div class="header-row">
+        <h2 id="eventTitle" style="margin:0; font-size:20px;">Event Scanner</h2>
+        <button class="secondary small-btn" type="button" onclick="logoutScanner()">Log Out</button>
+      </div>
+      <div class="meta-row">
+        <span>Event: <span id="eventIdBadge" class="badge">DEFAULT</span></span>
+        <span>Accepted: <strong id="scanCount">0</strong></span>
+      </div>
+      <div class="meta-row" style="align-items:center; margin-top:-4px;">
+        <span id="syncBadge" style="font-size:12px; color:#34d399;">Sync: Loading snapshot...</span>
+        <button id="syncNowBtn" class="secondary small-btn" type="button" onclick="flushScanQueue(true)">Sync Now</button>
+      </div>
+      <div id="syncAlertNote" class="error-text" style="display:none; margin-bottom:8px;"></div>
+
+      <label for="stageSelect">
+        Active Checkpoint Stage
+        <span id="stageLockBadge" class="badge locked" style="display:none; margin-left:6px;">LOCKED</span>
+      </label>
+      <select id="stageSelect">
+        <option value="Check-In">Check-In</option>
+        <option value="Mid-Event">Mid-Event</option>
+        <option value="Check-Out">Check-Out</option>
+      </select>
+
+      <div id="cameraPickerWrap" style="display:none;">
+        <label for="cameraSelect">Camera</label>
+        <select id="cameraSelect" onchange="switchCamera()"></select>
+      </div>
+
+      <div class="btn-row">
+        <button id="startCamBtn" type="button" onclick="startCamera()">Start Camera</button>
+        <button type="button" class="secondary" onclick="stopCamera()">Pause Camera</button>
+      </div>
+      <div id="reader"></div>
+      <div id="statusNote" class="status-note">Ready. Tap Start Camera to grant permission and scan.</div>
+      <div id="apiVersionNote" class="status-note" style="font-size:11px; opacity:0.75;"></div>
+    </div>
+
+    <div class="card">
+      <label for="manualInput">Manual Pass Code (Fallback if camera unavailable)</label>
+      <form id="manualForm" class="manual-row" onsubmit="submitManualCode(event)">
+        <input id="manualInput" type="text" placeholder="STUDENTID|TOKEN" autocomplete="off" />
+        <button id="manualSubmit" type="submit">Submit</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec';
+  const API_URL = new URLSearchParams(window.location.search).get('api') || DEFAULT_API_URL;
+  const SESSION_KEY = 'csso_session_token';
+  const LOCAL_SEEN_KEY = 'csso_local_seen_v1';
+  const SCAN_QUEUE_KEY = 'csso_scan_queue_v1';
+  const STAGE_BITS = { 'Check-In': 1, 'Mid-Event': 2, 'Check-Out': 4 };
+  const CAMERA_COOLDOWN_MS = 4000;
+  const FETCH_TIMEOUT_MS = 15000;
+  const KEEP_WARM_INTERVAL_MS = 240000; // 4 minutes (prevents Apps Script V8 cold starts)
+  const SYNC_INTERVAL_MS = 5000; // 5-second background batch sync
+  const SYNC_BATCH_THRESHOLD = 10;
+
+  let html5QrCode = null;
+  let isProcessing = false;
+  let isStarting = false;
+  let sessionToken = '';
+  let activeEventId = 'DEFAULT';
+  let localSeen = {};
+  let scanQueue = [];
+  let isSyncing = false;
+  let snapshotReady = false;
+  let snapshotRoster = {};
+  let snapshotSeen = {};
+  let snapshotEnforceOrder = false;
+  let snapshotV1Retired = false;
+  let snapshotV1CompatEventId = 'DEFAULT';
+  let snapshotLockedStage = 'AUTO';
+  let syncAlerts = 0;
+  let lastCameraPayload = '';
+  let lastCameraTime = 0;
+  let acceptedCount = 0;
+  let audioCtx = null;
+  let keepWarmTimer = null;
+  let syncTimer = null;
+
+  function normalizeIdLocal(id) {
+    return String(id || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  function loadScanQueue() {
+    try {
+      const raw = localStorage.getItem(SCAN_QUEUE_KEY);
+      scanQueue = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(scanQueue)) scanQueue = [];
+    } catch (e) {
+      scanQueue = [];
+    }
+    updateSyncUI();
+  }
+
+  function saveScanQueue() {
+    try { localStorage.setItem(SCAN_QUEUE_KEY, JSON.stringify(scanQueue)); } catch (e) {}
+    updateSyncUI();
+  }
+
+  function updateSyncUI() {
+    const badge = document.getElementById('syncBadge');
+    const btn = document.getElementById('syncNowBtn');
+    if (!badge) return;
+    const pending = scanQueue.length;
+    if (isSyncing) {
+      badge.style.color = '#fbbf24';
+      badge.textContent = `Syncing ${pending} scan(s)...`;
+    } else if (pending > 0) {
+      badge.style.color = navigator.onLine === false ? '#94a3b8' : '#fbbf24';
+      badge.textContent = navigator.onLine === false
+        ? `Offline (${pending} queued)`
+        : `Instant Mode • Pending: ${pending}`;
+    } else if (snapshotReady) {
+      badge.style.color = '#34d399';
+      badge.textContent = `Instant Mode • Synced ✓ (${Object.keys(snapshotRoster).length} roster)`;
+    } else {
+      badge.style.color = '#94a3b8';
+      badge.textContent = 'Online Mode (loading snapshot...)';
+    }
+    if (btn) btn.disabled = isSyncing || pending === 0;
+  }
+
+  async function loadSnapshot() {
+    if (!sessionToken) return;
+    try {
+      const snap = await apiCall({ action: 'snapshot', sessionToken });
+      if (snap && snap.ok) {
+        snapshotRoster = snap.roster || {};
+        snapshotSeen = snap.seen || {};
+        snapshotEnforceOrder = !!snap.enforceStageOrder;
+        snapshotV1Retired = !!snap.v1Retired;
+        snapshotV1CompatEventId = snap.v1CompatEventId || 'DEFAULT';
+        snapshotLockedStage = snap.lockedStage || 'AUTO';
+        activeEventId = snap.eventId || activeEventId;
+        snapshotReady = true;
+        updateSyncUI();
+      }
+    } catch (e) {
+      updateSyncUI();
+    }
+  }
+
+  function startSyncLoop() {
+    if (syncTimer) return;
+    syncTimer = setInterval(() => {
+      if (sessionToken && scanQueue.length > 0 && !isSyncing && navigator.onLine !== false) {
+        flushScanQueue(false);
+      }
+    }, SYNC_INTERVAL_MS);
+  }
+
+  function stopSyncLoop() {
+    if (syncTimer) {
+      clearInterval(syncTimer);
+      syncTimer = null;
+    }
+  }
+
+  async function flushScanQueue(manualTrigger) {
+    if (!sessionToken || isSyncing || scanQueue.length === 0) return;
+    isSyncing = true;
+    updateSyncUI();
+    const batch = scanQueue.slice(0, 50);
+    const batchIds = new Set(batch.map(x => x.clientId));
+    try {
+      const res = await apiCall({ action: 'scanBatch', sessionToken, scans: batch });
+      if (res && res.status === 'UNAUTHORIZED') {
+        isSyncing = false;
+        updateSyncUI();
+        returnToPinScreen(res.message || 'Session expired. Log in again to sync queued scans.');
+        return;
+      }
+      if (res && res.ok) {
+        scanQueue = scanQueue.filter(x => !batchIds.has(x.clientId));
+        saveScanQueue();
+        if (res.seen) snapshotSeen = res.seen;
+        const rejected = (res.results || []).filter(r => r.status && r.status !== 'OK');
+        if (rejected.length > 0) {
+          syncAlerts += rejected.length;
+          const alertEl = document.getElementById('syncAlertNote');
+          if (alertEl) {
+            alertEl.style.display = 'block';
+            const last = rejected[rejected.length - 1];
+            alertEl.textContent = `Sync notice (${syncAlerts}): ${last.studentId || 'Scan'} -> ${last.status}`;
+          }
+        }
+      }
+    } catch (err) {
+      if (manualTrigger) {
+        const alertEl = document.getElementById('syncAlertNote');
+        if (alertEl) {
+          alertEl.style.display = 'block';
+          alertEl.textContent = 'Sync delayed (offline/network). Scans remain safely queued.';
+        }
+      }
+    } finally {
+      isSyncing = false;
+      updateSyncUI();
+    }
+  }
+
+  window.addEventListener('online', () => {
+    updateSyncUI();
+    if (sessionToken && scanQueue.length > 0) flushScanQueue(false);
+  });
+  window.addEventListener('offline', () => updateSyncUI());
+
+  function validateScanLocally(payloadText, stage) {
+    if (snapshotLockedStage && snapshotLockedStage !== 'AUTO' && stage !== snapshotLockedStage) {
+      return { ok: false, status: 'REJECTED_STAGE_LOCKED', message: `Scanner is locked to ${snapshotLockedStage}.` };
+    }
+    const raw = String(payloadText || '');
+    const parts = raw.split('|');
+    let rawId = '';
+    if (parts[0] === 'v2') {
+      if (parts.length !== 4 || !parts[1] || !parts[2] || !parts[3]) {
+        return { ok: false, status: 'REJECTED_MALFORMED', message: 'Malformed v2 QR payload.' };
+      }
+      if (parts[1] !== activeEventId) {
+        return { ok: false, status: 'REJECTED_WRONG_EVENT', message: `Pass belongs to event "${parts[1]}", not "${activeEventId}".` };
+      }
+      rawId = parts[2];
+    } else {
+      if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+        return { ok: false, status: 'REJECTED_MALFORMED', message: 'Malformed QR payload.' };
+      }
+      if (snapshotV1Retired) {
+        return { ok: false, status: 'REJECTED_V1_RETIRED', message: 'Legacy v1 passes have been permanently retired.' };
+      }
+      if (activeEventId !== snapshotV1CompatEventId) {
+        return { ok: false, status: 'REJECTED_WRONG_EVENT', message: `Legacy v1 passes are only valid for ${snapshotV1CompatEventId}.` };
+      }
+      rawId = parts[0].trim().toUpperCase();
+    }
+
+    const normId = normalizeIdLocal(rawId);
+    const tuple = snapshotRoster[normId];
+    if (!tuple) {
+      return { ok: false, fallbackOnline: true }; // Walk-in student not in snapshot -> verify live online
+    }
+    const [studentId, fullName, section] = tuple;
+    const mask = snapshotSeen[normId] || 0;
+    const bit = STAGE_BITS[stage] || 0;
+    if (mask & bit) {
+      return { ok: false, status: 'DUPLICATE', studentId, fullName, section, message: `Already scanned for ${stage}.` };
+    }
+    if (snapshotEnforceOrder) {
+      if (stage === 'Mid-Event' && !(mask & STAGE_BITS['Check-In'])) {
+        return { ok: false, status: 'REJECTED_STAGE_ORDER', studentId, fullName, message: 'Must complete Check-In before Mid-Event.' };
+      }
+      if (stage === 'Check-Out' && !(mask & STAGE_BITS['Mid-Event'])) {
+        return { ok: false, status: 'REJECTED_STAGE_ORDER', studentId, fullName, message: 'Must complete Mid-Event before Check-Out.' };
+      }
+    }
+    return { ok: true, normId, studentId, fullName, section, bit };
+  }
+
+  function loadLocalSeen() {
+    try {
+      const raw = sessionStorage.getItem(LOCAL_SEEN_KEY);
+      localSeen = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      localSeen = {};
+    }
+  }
+
+  function rememberLocalSeen(eventId, stage, payload, res) {
+    const key = `${eventId}|${stage}|${payload}`;
+    localSeen[key] = {
+      studentId: res.studentId || '',
+      fullName: res.fullName || '',
+      section: res.section || ''
+    };
+    try { sessionStorage.setItem(LOCAL_SEEN_KEY, JSON.stringify(localSeen)); } catch (e) {}
+  }
+
+  function startKeepWarm() {
+    if (keepWarmTimer) return;
+    keepWarmTimer = setInterval(() => {
+      if (!sessionToken || document.hidden || isProcessing) return;
+      apiCall({ action: 'ping' }).catch(() => {});
+    }, KEEP_WARM_INTERVAL_MS);
+  }
+
+  function stopKeepWarm() {
+    if (keepWarmTimer) {
+      clearInterval(keepWarmTimer);
+      keepWarmTimer = null;
+    }
+  }
+
+  async function apiCall(body) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const resp = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(body),
+        redirect: 'follow',
+        signal: ctrl.signal
+      });
+      if (!resp.ok) {
+        throw new Error('Server HTTP ' + resp.status);
+      }
+      return await resp.json();
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        throw new Error('Request timed out after 15s. Check Wi-Fi and try again.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function playTone(type) {
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!audioCtx) audioCtx = new Ctx();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+
+      const beep = (freq, startOffset, duration) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.value = 0.15;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        const t = audioCtx.currentTime + startOffset;
+        osc.start(t);
+        osc.stop(t + duration);
+      };
+
+      if (type === 'ok') {
+        beep(880, 0, 0.14);
+        if (navigator.vibrate) navigator.vibrate(80);
+      } else if (type === 'dup') {
+        beep(520, 0, 0.1);
+        beep(520, 0.15, 0.1);
+        if (navigator.vibrate) navigator.vibrate([70, 50, 70]);
+      } else {
+        beep(220, 0, 0.28);
+        if (navigator.vibrate) navigator.vibrate(250);
+      }
+    } catch (e) {}
+  }
+
+  function applyScannerState(res) {
+    startKeepWarm();
+    startSyncLoop();
+    activeEventId = res.eventId || 'DEFAULT';
+    loadLocalSeen();
+    loadScanQueue();
+    loadSnapshot();
+    if (scanQueue.length > 0) flushScanQueue(false);
+    document.getElementById('pinScreen').style.display = 'none';
+    document.getElementById('scannerScreen').style.display = 'block';
+    document.getElementById('eventTitle').textContent = res.eventTitle || 'Event Scanner';
+    document.getElementById('eventIdBadge').textContent = res.eventId || 'DEFAULT';
+
+    const stageSelect = document.getElementById('stageSelect');
+    const lockBadge = document.getElementById('stageLockBadge');
+    if (res.lockedStage && res.lockedStage !== 'AUTO') {
+      stageSelect.value = res.lockedStage;
+      stageSelect.disabled = true;
+      lockBadge.style.display = 'inline-block';
+    } else {
+      stageSelect.disabled = false;
+      lockBadge.style.display = 'none';
+    }
+  }
+
+  function returnToPinScreen(msg) {
+    stopKeepWarm();
+    stopSyncLoop();
+    stopCamera();
+    sessionToken = '';
+    snapshotReady = false;
+    localSeen = {};
+    try {
+      sessionStorage.removeItem(SESSION_KEY);
+      sessionStorage.removeItem(LOCAL_SEEN_KEY);
+    } catch (e) {}
+    document.getElementById('scannerScreen').style.display = 'none';
+    document.getElementById('pinScreen').style.display = 'block';
+    document.getElementById('pinInput').value = '';
+    document.getElementById('pinError').textContent = msg || '';
+  }
+
+  async function logoutScanner() {
+    if (scanQueue.length > 0) {
+      await flushScanQueue(true);
+      if (scanQueue.length > 0) {
+        const proceed = confirm(`${scanQueue.length} scan(s) are still queued offline and will remain saved on this device until you log back in. Log out anyway?`);
+        if (!proceed) return;
+      }
+    }
+    returnToPinScreen('Logged out.');
+  }
+
+  async function unlockScanner(ev) {
+    if (ev) ev.preventDefault();
+    const pin = document.getElementById('pinInput').value;
+    const usherName = document.getElementById('usherNameInput').value.trim() || 'Usher';
+    const btn = document.getElementById('unlockBtn');
+    const errEl = document.getElementById('pinError');
+
+    errEl.textContent = 'Verifying...';
+    btn.disabled = true;
+
+    try {
+      const res = await apiCall({ action: 'login', pin, usherName });
+      if (res && res.ok) {
+        sessionToken = res.sessionToken;
+        try { sessionStorage.setItem(SESSION_KEY, sessionToken); } catch (e) {}
+        errEl.textContent = '';
+        applyScannerState(res);
+      } else {
+        errEl.textContent = (res && res.message) || 'Login failed.';
+      }
+    } catch (err) {
+      errEl.textContent = (err && err.message) || 'Connection error.';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function startCamera() {
+    if (isStarting) return;
+    isStarting = true;
+    const btn = document.getElementById('startCamBtn');
+    if (btn) btn.disabled = true;
+    const statusEl = document.getElementById('statusNote');
+
+    try {
+      if (!html5QrCode) {
+        html5QrCode = new Html5Qrcode('reader');
+      }
+      if (html5QrCode.isScanning) {
+        await stopCamera();
+      }
+
+      statusEl.textContent = 'Requesting camera permission...';
+      const devices = await Html5Qrcode.getCameras();
+      const select = document.getElementById('cameraSelect');
+      const wrap = document.getElementById('cameraPickerWrap');
+
+      let cameraConfig = { facingMode: 'environment' };
+      if (devices && devices.length > 0) {
+        if (select.options.length === 0) {
+          devices.forEach((d, idx) => {
+            const opt = document.createElement('option');
+            opt.value = d.id;
+            opt.textContent = d.label || ('Camera ' + (idx + 1));
+            select.appendChild(opt);
+          });
+          const rear = devices.find(d => /back|rear|environment/i.test(d.label || ''));
+          select.value = rear ? rear.id : devices[0].id;
+          if (devices.length > 1) wrap.style.display = 'block';
+        }
+        cameraConfig = select.value || devices[0].id;
+      }
+
+      await html5QrCode.start(
+        cameraConfig,
+        { fps: 10, qrbox: { width: 240, height: 240 } },
+        onScanSuccess,
+        () => {}
+      );
+      statusEl.textContent = 'Scanning active.';
+    } catch (err) {
+      const msg = String(err && err.message ? err.message : err);
+      if (/NotAllowedError|Permission/i.test(msg)) {
+        statusEl.textContent = 'Camera permission denied. Allow camera in browser site settings or use Manual Pass Code below.';
+      } else {
+        statusEl.textContent = 'Camera error: ' + msg;
+      }
+    } finally {
+      isStarting = false;
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function switchCamera() {
+    if (html5QrCode && html5QrCode.isScanning) {
+      await stopCamera();
+      await startCamera();
+    }
+  }
+
+  async function stopCamera() {
+    if (html5QrCode && html5QrCode.isScanning) {
+      try {
+        await html5QrCode.stop();
+        document.getElementById('statusNote').textContent = 'Camera paused.';
+      } catch (e) {}
+    }
+  }
+
+  function onScanSuccess(decodedText) {
+    const now = Date.now();
+    if (decodedText === lastCameraPayload && (now - lastCameraTime) < CAMERA_COOLDOWN_MS) {
+      return;
+    }
+    lastCameraPayload = decodedText;
+    lastCameraTime = now;
+    submitScan(decodedText, false);
+  }
+
+  function submitManualCode(ev) {
+    if (ev) ev.preventDefault();
+    const input = document.getElementById('manualInput');
+    const code = input.value.trim();
+    if (!code) return;
+    submitScan(code, true);
+    input.value = '';
+  }
+
+  async function submitScan(payloadText, fromManual) {
+    if (isProcessing) return;
+    isProcessing = true;
+
+    const stage = document.getElementById('stageSelect').value;
+    const statusEl = document.getElementById('statusNote');
+
+    const resetReady = () => {
+      isProcessing = false;
+      statusEl.textContent = (html5QrCode && html5QrCode.isScanning) ? 'Scanning active.' : 'Ready.';
+    };
+
+    // Option A: Instant (<10ms) Offline-First Batch Mode when snapshot is loaded
+    if (snapshotReady) {
+      const check = validateScanLocally(payloadText, stage);
+      if (!check.fallbackOnline) {
+        if (check.ok) {
+          snapshotSeen[check.normId] = (snapshotSeen[check.normId] || 0) | check.bit;
+          const nowIso = new Date().toISOString();
+          const nowTime = new Date().toTimeString().slice(0, 8);
+          scanQueue.push({
+            clientId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            payload: payloadText,
+            stage,
+            scannedAt: nowIso
+          });
+          saveScanQueue();
+          rememberLocalSeen(activeEventId, stage, payloadText, check);
+          showResult({
+            status: 'OK',
+            studentId: check.studentId,
+            fullName: check.fullName,
+            section: check.section,
+            stage,
+            time: `${nowTime} • queued`
+          });
+          if (scanQueue.length >= SYNC_BATCH_THRESHOLD && !isSyncing) {
+            flushScanQueue(false);
+          }
+          setTimeout(resetReady, 250);
+          return;
+        } else {
+          showResult(check);
+          setTimeout(resetReady, 250);
+          return;
+        }
+      }
+    }
+
+    // Instant (<5ms) O(1) local duplicate short-circuit for online fallback mode
+    const localKey = `${activeEventId}|${stage}|${payloadText}`;
+    if (!fromManual && localSeen[localKey]) {
+      const hit = localSeen[localKey];
+      showResult({
+        status: 'DUPLICATE',
+        studentId: hit.studentId,
+        fullName: hit.fullName,
+        section: hit.section,
+        message: `Already scanned for ${stage} (instant local check).`
+      });
+      setTimeout(resetReady, 300);
+      return;
+    }
+
+    statusEl.textContent = 'Checking pass...';
+
+    try {
+      const res = await apiCall({ action: 'scan', sessionToken, payload: payloadText, stage });
+      if (res && res.status === 'UNAUTHORIZED') {
+        isProcessing = false;
+        playTone('bad');
+        returnToPinScreen(res.message || 'Session expired. Please log in again.');
+        return;
+      }
+      if (res && (res.status === 'OK' || res.status === 'DUPLICATE')) {
+        rememberLocalSeen(res.eventId || activeEventId, stage, payloadText, res);
+      }
+      showResult(res || { status: 'ERROR', message: 'Empty server response.' });
+      setTimeout(resetReady, 300);
+    } catch (err) {
+      showResult({ status: 'ERROR', message: (err && err.message) || 'Network error.' });
+      setTimeout(resetReady, 600);
+    }
+  }
+
+  function showResult(res) {
+    const banner = document.getElementById('resultBanner');
+    const title = document.getElementById('resTitle');
+    const name = document.getElementById('resName');
+    const sub = document.getElementById('resSub');
+
+    banner.style.display = 'block';
+    banner.className = 'result-banner';
+
+    if (res.status === 'OK') {
+      acceptedCount++;
+      document.getElementById('scanCount').textContent = String(acceptedCount);
+      banner.classList.add('res-ok');
+      title.textContent = 'VERIFIED - ' + String(res.stage || '').toUpperCase();
+      name.textContent = res.fullName || res.studentId || 'Participant';
+      sub.textContent = `ID: ${res.studentId} | ${res.section || 'No Section'} | ${res.time}`;
+      playTone('ok');
+    } else if (res.status === 'DUPLICATE') {
+      banner.classList.add('res-dup');
+      title.textContent = 'ALREADY SCANNED';
+      name.textContent = res.fullName || 'Duplicate Scan';
+      sub.textContent = `${res.studentId || ''} - ${res.message || ''}`;
+      playTone('dup');
+    } else {
+      const labels = {
+        REJECTED_FORGED: 'FORGED TOKEN',
+        REJECTED_MALFORMED: 'MALFORMED QR',
+        REJECTED_NOT_IN_ROSTER: 'NOT IN ROSTER',
+        REJECTED_STAGE_LOCKED: 'STAGE LOCKED',
+        REJECTED_STAGE_ORDER: 'OUT OF ORDER',
+        REJECTED_WRONG_EVENT: 'WRONG EVENT',
+        REJECTED_V1_RETIRED: 'LEGACY PASS RETIRED',
+        INTERNAL_ERROR: 'SERVER ERROR'
+      };
+      banner.classList.add('res-bad');
+      title.textContent = 'REJECTED';
+      name.textContent = labels[res.status] || res.status || 'ERROR';
+      sub.textContent = res.message || 'Invalid QR code.';
+      playTone('bad');
+    }
+  }
+
+  // Check backend health & auto-restore session on page reload
+  (async function initSession() {
+    try {
+      const ping = await apiCall({ action: 'ping' });
+      const note = document.getElementById('apiVersionNote');
+      if (ping && ping.ok && note) {
+        note.textContent = `Backend: ${ping.version || 'connected'} (Event: ${ping.eventId || 'DEFAULT'})`;
+      }
+    } catch (e) {}
+
+    let saved = '';
+    try { saved = sessionStorage.getItem(SESSION_KEY) || ''; } catch (e) {}
+    if (!saved) return;
+    document.getElementById('pinError').textContent = 'Restoring session...';
+    try {
+      const res = await apiCall({ action: 'state', sessionToken: saved });
+      if (res && res.ok) {
+        sessionToken = saved;
+        document.getElementById('pinError').textContent = '';
+        applyScannerState(res);
+      } else {
+        returnToPinScreen('');
+      }
+    } catch (e) {
+      returnToPinScreen('');
+    }
+  })();
+</script>
+</body>
+</html>

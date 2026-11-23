@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CvSU CSSO — Get Your QR Attendance Pass</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #0f172a;
+      color: #f8fafc;
+    }
+    .box { max-width: 460px; margin: 0 auto; }
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 14px;
+      padding: 20px;
+      margin-bottom: 14px;
+    }
+    h1 { margin: 0 0 6px 0; font-size: 22px; }
+    .sub { color: #94a3b8; font-size: 13px; margin: 0 0 16px 0; line-height: 1.45; }
+    label { display: block; font-size: 13px; color: #94a3b8; margin-bottom: 6px; }
+    input, button {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      border-radius: 10px;
+      border: 1px solid #334155;
+      margin-bottom: 12px;
+    }
+    input { background: #0f172a; color: #f8fafc; }
+    button {
+      background: #2563eb;
+      color: #fff;
+      font-weight: 700;
+      border: none;
+      cursor: pointer;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    button.secondary { background: #334155; }
+    button.secondary:hover { background: #475569; }
+    .error-text { color: #fca5a5; font-size: 14px; min-height: 18px; }
+    .pass-card { text-align: center; display: none; }
+    .badge {
+      display: inline-block;
+      background: #1d4ed8;
+      color: #dbeafe;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 999px;
+      margin-bottom: 10px;
+    }
+    .qr-wrap {
+      background: #ffffff;
+      display: inline-block;
+      padding: 14px;
+      border-radius: 12px;
+      margin: 10px 0 14px 0;
+    }
+    .qr-wrap img { width: 240px; height: 240px; display: block; }
+    .name { font-size: 20px; font-weight: 800; margin: 4px 0; }
+    .meta { font-size: 14px; color: #cbd5e1; margin-bottom: 10px; }
+    .code-box {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      word-break: break-all;
+      color: #e2e8f0;
+      margin-bottom: 14px;
+    }
+    .note { font-size: 12px; color: #94a3b8; line-height: 1.45; }
+  </style>
+</head>
+<body>
+<div class="box">
+  <div id="lookupCard" class="card">
+    <h1>Get Your QR Pass</h1>
+    <p class="sub">
+      Already submitted the registration Google Form? Enter your <strong>Student ID</strong> and the
+      exact <strong>Email</strong> you used to download your signed QR Attendance Pass immediately.
+    </p>
+    <form id="lookupForm" onsubmit="fetchPass(event)">
+      <label for="studentIdInput">Student ID</label>
+      <input id="studentIdInput" type="text" placeholder="e.g., 202300328" autocomplete="off" required />
+
+      <label for="emailInput">Registered Email</label>
+      <input id="emailInput" type="email" placeholder="e.g., name@cvsu.edu.ph" autocomplete="email" required />
+
+      <button id="submitBtn" type="submit">View My QR Pass</button>
+    </form>
+    <div id="errorText" class="error-text"></div>
+  </div>
+
+  <div id="passCard" class="card pass-card">
+    <div id="eventBadge" class="badge">EVENT</div>
+    <h1 id="eventTitle" style="margin-bottom:4px;">Event Attendance Pass</h1>
+    <div id="studentName" class="name"></div>
+    <div id="studentMeta" class="meta"></div>
+    <div class="qr-wrap">
+      <img id="qrImg" alt="Your Signed QR Attendance Pass" />
+    </div>
+    <div id="manualCode" class="code-box"></div>
+    <button id="downloadBtn" type="button" onclick="downloadQr()">Download QR Pass (PNG)</button>
+    <button class="secondary" type="button" onclick="resetForm()">Look Up Another Student</button>
+    <p class="note">
+      Save a screenshot or downloaded PNG of this QR code and bring your <strong>physical School ID</strong>.
+      You must be scanned at <strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong> to qualify.
+    </p>
+  </div>
+</div>
+
+<script>
+  const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec';
+  const API_URL = new URLSearchParams(window.location.search).get('api') || DEFAULT_API_URL;
+  let currentPass = null;
+
+  async function fetchPass(ev) {
+    if (ev) ev.preventDefault();
+    const studentId = document.getElementById('studentIdInput').value.trim();
+    const email = document.getElementById('emailInput').value.trim();
+    const btn = document.getElementById('submitBtn');
+    const errEl = document.getElementById('errorText');
+
+    errEl.textContent = 'Generating your signed QR pass...';
+    btn.disabled = true;
+
+    try {
+      const resp = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'lookupPass', studentId, email }),
+        redirect: 'follow'
+      });
+      if (!resp.ok) throw new Error('Server HTTP ' + resp.status);
+      const res = await resp.json();
+
+      if (!res || !res.ok) {
+        errEl.textContent = (res && res.message) || 'Could not find a matching registration.';
+        return;
+      }
+
+      currentPass = res;
+      document.getElementById('eventBadge').textContent = res.eventId || 'EVENT';
+      document.getElementById('eventTitle').textContent = res.eventTitle || 'Event Attendance Pass';
+      document.getElementById('studentName').textContent = res.fullName || res.studentId;
+      document.getElementById('studentMeta').textContent = `${res.studentId}${res.section ? ' | ' + res.section : ''}`;
+      document.getElementById('qrImg').src = res.qrDataUri;
+      document.getElementById('manualCode').textContent = res.payload;
+      errEl.textContent = '';
+
+      document.getElementById('lookupCard').style.display = 'none';
+      document.getElementById('passCard').style.display = 'block';
+    } catch (err) {
+      errEl.textContent = (err && err.message) || 'Connection error. Please try again.';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function downloadQr() {
+    if (!currentPass || !currentPass.qrDataUri) return;
+    const a = document.createElement('a');
+    a.href = currentPass.qrDataUri;
+    a.download = `QR_Pass_${currentPass.studentId}_${currentPass.eventId}.png`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function resetForm() {
+    currentPass = null;
+    document.getElementById('passCard').style.display = 'none';
+    document.getElementById('lookupCard').style.display = 'block';
+    document.getElementById('errorText').textContent = '';
+  }
+</script>
+</body>
+</html>
