@@ -295,6 +295,11 @@ function onOpen() {
       "issueTargetEventV2Passes",
     )
     .addItem("Rebuild Verified Attendance", "rebuildVerifiedAttendance")
+    .addSeparator()
+    .addItem(
+      "🧹 Clear All Data Rows (Keep Headers & Config)",
+      "clearAllDataRows",
+    )
     .addToUi();
 }
 
@@ -1376,6 +1381,83 @@ function recordScanBatch(sessionToken, scans) {
     }
 
     return { ok: true, eventId: cfg.EVENT_ID, results, seen: seenIndex };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Clears all data rows (Row 2+) from Roster, Attendance Log, and Verified Attendance
+ * while preserving Row 1 headers, formatting, and the Config tab.
+ * Requires typing "CLEAR ALL" in a confirmation prompt to prevent accidental data loss.
+ */
+function clearAllDataRows() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const targets = [
+    { name: "Roster", minCols: 14 },
+    { name: "Attendance Log", minCols: 8 },
+    { name: "Verified Attendance", minCols: 8 },
+  ];
+
+  const counts = targets.map((t) => {
+    const s = ss.getSheetByName(t.name);
+    const rows = s ? Math.max(0, s.getLastRow() - 1) : 0;
+    return `${t.name}: ${rows} row(s)`;
+  });
+
+  const prompt = ui.prompt(
+    "⚠️ Clear All Data Rows",
+    `This will permanently clear all data rows (keeping Row 1 headers and Config):\n\n• ${counts.join("\n• ")}\n\nType CLEAR ALL to confirm:`,
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (
+    prompt.getSelectedButton() !== ui.Button.OK ||
+    String(prompt.getResponseText() || "").trim() !== "CLEAR ALL"
+  ) {
+    ui.alert("Cancelled", "No rows were cleared.", ui.ButtonSet.OK);
+    return { ok: false, reason: "CANCELLED" };
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    ui.alert(
+      "Busy",
+      "Another scan or rebuild is in progress. Please try again in a moment.",
+      ui.ButtonSet.OK,
+    );
+    return { ok: false, reason: "LOCKED" };
+  }
+
+  try {
+    const cleared = {};
+    const cfg = getConfig_();
+
+    targets.forEach((t) => {
+      const s = ss.getSheetByName(t.name);
+      if (!s) {
+        cleared[t.name] = 0;
+        return;
+      }
+      const lastRow = s.getLastRow();
+      if (lastRow > 1) {
+        const numCols = Math.max(t.minCols, s.getLastColumn());
+        s.getRange(2, 1, lastRow - 1, numCols).clearContent();
+        cleared[t.name] = lastRow - 1;
+      } else {
+        cleared[t.name] = 0;
+      }
+    });
+
+    invalidateRosterCache_();
+    invalidateEventSeenIndex_(cfg.EVENT_ID);
+
+    ui.alert(
+      "Data Rows Cleared",
+      `Cleared successfully (headers & Config preserved):\n\n• Roster: ${cleared["Roster"]}\n• Attendance Log: ${cleared["Attendance Log"]}\n• Verified Attendance: ${cleared["Verified Attendance"]}\n\nCaches invalidated.`,
+      ui.ButtonSet.OK,
+    );
+    return { ok: true, cleared };
   } finally {
     lock.releaseLock();
   }
