@@ -202,6 +202,44 @@ function run() {
     assert.strictEqual(configMap().get('REGISTRATION_FORM_EDIT_URL'), formInfo.editUrl);
   }
 
+  // 4. clearAttendanceLogsAndVerified clears Attendance Log & Verified Attendance while keeping Roster & Config
+  {
+    const env = makeFixture();
+    const { ctx, sheets, cache } = env;
+    sheets.get('Attendance Log').appendRow([new Date(), 'Check-In', '202310001', 'Juan Dela Cruz', 'BSCS 4-2', 'Gate A', 'ACCEPTED', 'CSSO-2026']);
+    sheets.get('Verified Attendance').appendRow(['202310001', 'Juan Dela Cruz', 'BSCS 4-2', '08:00:00', '—', '—', 'INCOMPLETE', 1]);
+    const seenKey = ctx.eventIndexCacheKey_('CSSO-2026');
+    ctx.putEventSeenIndex_('CSSO-2026', { '202310001': 1 });
+    assert.ok(cache.get(seenKey) !== null);
+
+    const ui = ctx.SpreadsheetApp.getUi();
+    ui.ButtonSet.OK_CANCEL = 'OK_CANCEL';
+    let promptResponse = 'WRONG';
+    ui.prompt = () => ({
+      getSelectedButton: () => ui.Button.OK,
+      getResponseText: () => promptResponse
+    });
+
+    // Wrong confirmation phrase -> cancelled, rows intact
+    const cancelled = ctx.clearAttendanceLogsAndVerified();
+    assert.strictEqual(cancelled.ok, false);
+    assert.strictEqual(cancelled.reason, 'CANCELLED');
+    assert.strictEqual(sheets.get('Attendance Log').getLastRow(), 2);
+    assert.strictEqual(sheets.get('Verified Attendance').getLastRow(), 2);
+
+    // Exact confirmation phrase CLEAR LOGS -> clears logs & verified, keeps Roster & Config
+    promptResponse = 'CLEAR LOGS';
+    const cleared = ctx.clearAttendanceLogsAndVerified();
+    assert.strictEqual(cleared.ok, true);
+    assert.strictEqual(cleared.cleared['Attendance Log'], 1);
+    assert.strictEqual(cleared.cleared['Verified Attendance'], 1);
+    assert.strictEqual(sheets.get('Attendance Log').getLastRow(), 1);
+    assert.strictEqual(sheets.get('Verified Attendance').getLastRow(), 1);
+    assert.strictEqual(sheets.get('Roster').getLastRow(), 2);
+    assert.ok(sheets.get('Config').getLastRow() >= 7);
+    assert.strictEqual(cache.get(seenKey), null);
+  }
+
   console.log('PASS: form-portal.test.js');
 }
 
