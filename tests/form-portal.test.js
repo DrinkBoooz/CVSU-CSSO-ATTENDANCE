@@ -444,6 +444,30 @@ function run() {
     assert.strictEqual(scriptProps.get('LEGACY_SECRET_SALT'), undefined);
   }
 
+  // 10. applyAllSystemUpgrades auto-fills blank PORTAL_BASE_URL & WEB_APP_URL while preserving custom values
+  {
+    const env = makeFixture();
+    const { ctx, sheets } = env;
+    const mockExec = 'https://script.google.com/macros/s/AKfycbxMOCKDEPLOY123456/exec';
+    ctx.ScriptApp.getService = () => ({ getUrl: () => mockExec });
+
+    // Start with blank PORTAL_BASE_URL row and missing WEB_APP_URL row
+    sheets.get('Config').appendRow(['PORTAL_BASE_URL', '', '']);
+    ctx.applyAllSystemUpgrades();
+
+    const cfgMap = () => new Map(
+      sheets.get('Config')._data.slice(1).map(r => [String(r[0]), String(r[1])])
+    );
+    assert.strictEqual(cfgMap().get('PORTAL_BASE_URL'), 'https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE');
+    assert.strictEqual(cfgMap().get('WEB_APP_URL'), mockExec);
+
+    // Custom values must NOT be overwritten on subsequent upgrades
+    const portalRowIdx = sheets.get('Config')._data.findIndex(r => r[0] === 'PORTAL_BASE_URL');
+    sheets.get('Config')._data[portalRowIdx][1] = 'https://customorg.github.io/events';
+    ctx.applyAllSystemUpgrades();
+    assert.strictEqual(cfgMap().get('PORTAL_BASE_URL'), 'https://customorg.github.io/events');
+  }
+
   console.log('PASS: form-portal.test.js');
 }
 

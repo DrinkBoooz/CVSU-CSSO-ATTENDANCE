@@ -2853,6 +2853,19 @@ function ensureConfigKeys_(ss) {
   }
   const rows = sheet.getLastRow() > 0 ? sheet.getDataRange().getValues() : [];
   const existingKeys = new Set(rows.map((r) => String(r[0] || "").trim()));
+  const defaultPortalBase =
+    "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE";
+  const gasExecRe =
+    /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
+  let detectedWebAppUrl = "";
+  try {
+    const svcUrl =
+      typeof ScriptApp.getService === "function" && ScriptApp.getService()
+        ? String(ScriptApp.getService().getUrl() || "").trim()
+        : "";
+    if (gasExecRe.test(svcUrl)) detectedWebAppUrl = svcUrl;
+  } catch (e) {}
+
   const defaults = [
     [
       "EVENT_ID",
@@ -2872,13 +2885,13 @@ function ensureConfigKeys_(ss) {
     ],
     [
       "PORTAL_BASE_URL",
-      "",
-      "Optional custom GitHub Pages base URL for forks (e.g. https://<user>.github.io/<repo>)",
+      defaultPortalBase,
+      "GitHub Pages base URL for scanner & pass portal (edit for forks: https://<user>.github.io/<repo>)",
     ],
     [
       "WEB_APP_URL",
-      "",
-      "Optional Apps Script Web App /exec URL embedded as ?api= in the Form confirmation link",
+      detectedWebAppUrl,
+      "Deployed Apps Script Web App /exec URL embedded as ?api= in the Form confirmation link",
     ],
   ];
   const toAdd = defaults.filter(([k]) => !existingKeys.has(k));
@@ -2886,10 +2899,13 @@ function ensureConfigKeys_(ss) {
     sheet.getRange(sheet.getLastRow() + 1, 1, toAdd.length, 3).setValues(toAdd);
   }
 
-  // Apply dropdown validation to LOCKED_STAGE value cell
+  // Apply dropdown validation to LOCKED_STAGE and auto-fill blank PORTAL_BASE_URL / WEB_APP_URL cells
   const updatedRows = sheet.getDataRange().getValues();
-  for (let i = 0; i < updatedRows.length; i++) {
-    if (String(updatedRows[i][0] || "").trim() === "LOCKED_STAGE") {
+  const filled = [];
+  for (let i = 1; i < updatedRows.length; i++) {
+    const k = String(updatedRows[i][0] || "").trim();
+    const v = String(updatedRows[i][1] || "").trim();
+    if (k === "LOCKED_STAGE") {
       const rule = SpreadsheetApp.newDataValidation()
         .requireValueInList(
           ["AUTO", "Check-In", "Mid-Event", "Check-Out"],
@@ -2898,12 +2914,18 @@ function ensureConfigKeys_(ss) {
         .setAllowInvalid(false)
         .build();
       sheet.getRange(i + 1, 2).setDataValidation(rule);
-      break;
+    } else if (k === "PORTAL_BASE_URL" && !v) {
+      sheet.getRange(i + 1, 2).setValue(defaultPortalBase);
+      filled.push("PORTAL_BASE_URL");
+    } else if (k === "WEB_APP_URL" && !v && detectedWebAppUrl) {
+      sheet.getRange(i + 1, 2).setValue(detectedWebAppUrl);
+      filled.push("WEB_APP_URL");
     }
   }
-  return toAdd.length
-    ? `Added ${toAdd.map((r) => r[0]).join(", ")}`
-    : "All keys present";
+  const parts = [];
+  if (toAdd.length) parts.push(`Added ${toAdd.map((r) => r[0]).join(", ")}`);
+  if (filled.length) parts.push(`Populated ${filled.join(", ")}`);
+  return parts.length ? parts.join("; ") : "All keys present";
 }
 
 /**
