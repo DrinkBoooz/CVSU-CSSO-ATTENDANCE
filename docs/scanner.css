@@ -356,18 +356,30 @@
       }
       #reader {
         width: 100%;
+        max-height: 44vh;
         border-radius: 12px;
         overflow: hidden;
         background: #000;
-        margin-top: 4px;
+        margin-top: 6px;
         contain: layout style paint;
+      }
+      #reader video {
+        max-height: 44vh;
+        object-fit: cover;
       }
       .result-banner {
         display: none;
-        padding: 16px;
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        right: 10px;
+        max-width: 460px;
+        margin: 0 auto;
+        z-index: 950;
+        padding: 12px 14px;
         border-radius: var(--radius);
-        margin-bottom: 12px;
         text-align: center;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
         contain: layout style paint;
       }
       .res-ok {
@@ -430,12 +442,19 @@
       }
       .confirm-card {
         display: none;
+        position: fixed;
+        left: 10px;
+        right: 10px;
+        bottom: max(12px, env(safe-area-inset-bottom));
+        max-width: 460px;
+        margin: 0 auto;
+        z-index: 1000;
         background: var(--dup-bg);
         border: 2px solid var(--dup-border);
         border-radius: var(--radius);
-        padding: 16px;
-        margin-bottom: 12px;
+        padding: 14px 16px;
         text-align: center;
+        box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.55);
         contain: layout style paint;
       }
       button.confirm-btn {
@@ -483,3 +502,21 @@
 .sync-alert { display: none; margin-bottom: 8px; }
 .stage-lock-badge { display: none; margin-left: 6px; }
 .api-version-note { font-size: 11px; opacity: 0.8; }
+.compact-card { padding: 12px 14px; }
+.compact-header { margin-bottom: 8px; align-items: flex-start; }
+.header-meta { min-width: 0; flex: 1; }
+.hud-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.hud-count { font-weight: 600; }
+.compact-btn-row { margin-bottom: 4px; }
+.compact-btn-row button { min-height: 42px; padding: 8px 10px; margin-bottom: 0; font-size: 14px; }
+.camera-picker-wrap { margin-top: 10px; }
+.compact-hud-pill { margin-top: 10px; margin-bottom: 8px; }
+.compact-toggle-row { margin-bottom: 4px; }

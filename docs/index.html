@@ -144,11 +144,21 @@
           </div>
         </div>
 
-        <div class="card">
-          <div class="header-row">
-            <h2 id="eventTitle" class="event-heading">
-              Event Scanner
-            </h2>
+        <div class="card compact-card">
+          <div class="header-row compact-header">
+            <div class="header-meta">
+              <h2 id="eventTitle" class="event-heading">Event Scanner</h2>
+              <div class="hud-inline">
+                <span id="eventIdBadge" class="badge">DEFAULT</span>
+                <span class="hud-count"
+                  >Accepted:
+                  <strong id="scanCount" class="count-num">0</strong></span
+                >
+                <span id="stageLockBadge" class="badge locked stage-lock-badge"
+                  >LOCKED</span
+                >
+              </div>
+            </div>
             <button
               class="secondary small-btn"
               type="button"
@@ -157,62 +167,7 @@
               Log Out
             </button>
           </div>
-          <div class="hud-row">
-            <span
-              >Event: <span id="eventIdBadge" class="badge">DEFAULT</span></span
-            >
-            <span
-              >Accepted:
-              <strong id="scanCount" class="count-num">0</strong></span
-            >
-          </div>
-          <div class="hud-pill">
-            <span
-              id="syncBadge"
-              class="sync-badge"
-              >Sync: Loading snapshot...</span
-            >
-            <button
-              id="syncNowBtn"
-              class="secondary small-btn"
-              type="button"
-              data-on-click="flushScanQueue(true)"
-            >
-              Sync Now
-            </button>
-          </div>
-          <div
-            id="syncAlertNote"
-            class="error-text sync-alert"
-          ></div>
 
-          <div class="toggle-row">
-            <label class="toggle-label" for="verifyIdToggle">
-              <input id="verifyIdToggle" type="checkbox" checked />
-              Verify ID First
-            </label>
-            <label class="toggle-label" for="strictOnlineToggle">
-              <input id="strictOnlineToggle" type="checkbox" />
-              Strict Online
-            </label>
-            <button
-              id="refreshRosterBtn"
-              class="secondary small-btn"
-              type="button"
-              data-on-click="refreshRosterSnapshot()"
-            >
-              Refresh Roster
-            </button>
-          </div>
-
-          <label for="stageSelect">
-            Active Checkpoint Stage
-            <span
-              id="stageLockBadge"
-              class="badge locked stage-lock-badge"
-              >LOCKED</span
-            >
-          </label>
           <div
             id="stagePills"
             class="stage-pills"
@@ -257,12 +212,7 @@
             <option value="Check-Out">Check-Out</option>
           </select>
 
-          <div id="cameraPickerWrap" class="is-hidden">
-            <label for="cameraSelect">Camera</label>
-            <select id="cameraSelect" data-on-change="switchCamera()"></select>
-          </div>
-
-          <div class="btn-row">
+          <div class="btn-row compact-btn-row">
             <button id="startCamBtn" type="button" data-on-click="startCamera()">
               Start Camera
             </button>
@@ -270,9 +220,49 @@
               Pause Camera
             </button>
           </div>
+
           <div id="reader"></div>
           <div id="statusNote" class="status-note">
             Ready. Tap Start Camera to grant permission and scan.
+          </div>
+
+          <div id="cameraPickerWrap" class="is-hidden camera-picker-wrap">
+            <label for="cameraSelect">Camera</label>
+            <select id="cameraSelect" data-on-change="switchCamera()"></select>
+          </div>
+
+          <div class="hud-pill compact-hud-pill">
+            <span id="syncBadge" class="sync-badge"
+              >Sync: Loading snapshot...</span
+            >
+            <button
+              id="syncNowBtn"
+              class="secondary small-btn"
+              type="button"
+              data-on-click="flushScanQueue(true)"
+            >
+              Sync Now
+            </button>
+          </div>
+          <div id="syncAlertNote" class="error-text sync-alert"></div>
+
+          <div class="toggle-row compact-toggle-row">
+            <label class="toggle-label" for="verifyIdToggle">
+              <input id="verifyIdToggle" type="checkbox" checked />
+              Verify ID First
+            </label>
+            <label class="toggle-label" for="strictOnlineToggle">
+              <input id="strictOnlineToggle" type="checkbox" />
+              Strict Online
+            </label>
+            <button
+              id="refreshRosterBtn"
+              class="secondary small-btn"
+              type="button"
+              data-on-click="refreshRosterSnapshot()"
+            >
+              Refresh Roster
+            </button>
           </div>
           <div
             id="apiVersionNote"
