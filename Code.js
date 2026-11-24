@@ -502,9 +502,19 @@ function verifyUsherPin(pinInput, usherName) {
     };
   }
 
+  const cleanUsher = String(usherName || "")
+    .replace(/\|/g, " ")
+    .trim();
+  if (cleanUsher.length < 2) {
+    return {
+      ok: false,
+      message: "Please enter your Usher Name / Gate (at least 2 characters).",
+    };
+  }
+
   const cleanPin = String(pinInput || "").trim();
   if (cleanPin && constantTimeEqual_(cleanPin, cfg.USHER_PIN)) {
-    const sess = createSessionToken_(usherName, cfg);
+    const sess = createSessionToken_(cleanUsher, cfg);
     return {
       ok: true,
       sessionToken: sess.token,

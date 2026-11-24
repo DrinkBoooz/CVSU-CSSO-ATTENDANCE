@@ -72,15 +72,22 @@
 
           <label for="usherNameInput">Usher Name / Gate</label>
           <span id="usher-hint" class="hint"
-            >Optional gate label recorded in Attendance Log</span
+            >Required — recorded in Attendance Log for accountability</span
           >
           <input
             id="usherNameInput"
             type="text"
+            minlength="2"
             maxlength="40"
             placeholder="e.g., Gate A - Marco"
             aria-describedby="usher-hint"
+            data-error="usher-format-error"
+            aria-invalid="false"
+            required
           />
+          <div id="usher-format-error" class="error-msg">
+            Error: Enter your Usher Name / Gate (at least 2 characters).
+          </div>
 
           <button id="unlockBtn" type="submit">Unlock Scanner</button>
         </form>
