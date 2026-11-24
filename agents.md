@@ -6,22 +6,25 @@
 ## 0. Agent Governance & Rule Modification
 - **Controlled Artifact**: `agents.md` defines the immutable meta-governance and operational directives for all agents in this workspace.
 - **Bifurcated Hierarchy Principle**:
-  - *Meta-Governance Authority (Priority 0)*: Directives in `agents.md` governing agent behavior, commit formatting, branch permissions, and clasp workflows are absolute and strictly override all other files.
-  - *Domain Technical Truth (Priority 1–6)*: Technical data structures, column schemas, and formula specifications are subordinate to live sheets, `Code.js`, `Index.html`, and test suites as defined in Section 1.
+  - *Meta-Governance Authority (Priority 0)*: Directives in `agents.md` governing agent behavior, commit formatting, branch permissions, approval boundaries, and clasp workflows are absolute and strictly override all other files.
+  - *Approved Plan & Baseline Separation*: An explicitly approved implementation plan governs target-state architecture, locked decisions, phase ordering, and acceptance criteria. Existing code, tests, and live spreadsheet data (Section 1) establish the current-state baseline and do not automatically override an approved migration target.
 - **No Unauthorized Modifications**: Agents must NEVER modify `agents.md` simply because they believe instructions could be improved. Any modification to `agents.md` requires explicit user instruction naming `agents.md` directly or approving an implementation plan with an explicit `agents.md` edit milestone.
 - **No Silent Updates**: Documentation audits, script refactors, or feature implementations must not silently alter agent governance.
-- **Reporting Issues**: If a task exposes a governance contradiction or missing rule, report it to the user in a dedicated audit deliverable rather than editing governance rules unilaterally.
+- **Reporting Issues & Non-Recursive Execution**: If a task exposes a genuine governance contradiction or missing rule, report it to the user in a dedicated audit deliverable rather than editing governance rules unilaterally. However, a completed forensic audit must not be repeated merely because an approved plan intentionally differs from the current implementation, and test failures initiate the prescribed debugging and regression workflow rather than automatic replanning.
 
 ## 1. Source-of-Truth Hierarchy & Anti-Fabrication
-When resolving discrepancies or ambiguous technical specifications, agents must strictly observe this hierarchy:
-1. **Live Google Spreadsheet**: Active columns, key-value settings, formulas, and data validations in `Config`, `Roster`, `Attendance Log`, and `Verified Attendance`.
-2. **Google Apps Script Codebase (`Code.js`, `Index.html`, `appsscript.json`)**: Pulled directly via `clasp pull`. (Serves as Tier 1 ground truth in offline/sandbox environments).
-3. **Automated Verification Suites & Tests (`tests/`)**: Node.js test suites (when present) validating QR signature generation, duplicate-scan prevention, ID normalization, and attendance rebuilds.
+When inspecting the **current-state baseline**, agents must observe this hierarchy:
+1. **Live Google Spreadsheet** (when inspection is authorized): Active columns, key-value settings, formulas, and data validations in `Config`, `Roster`, `Attendance Log`, and `Verified Attendance`.
+2. **Google Apps Script & Frontend Codebase (`Code.js`, `Index.html`, `docs/index.html`, `appsscript.json`)**: Current local `dev` workspace files (never overwrite local changes with an unconditional `clasp pull`; serves as Tier 1 baseline in offline/sandbox environments).
+3. **Automated Verification Suites & Tests (`tests/`)**: Node.js and browser test suites validating current and target contracts.
 4. **CSSO-Specific Skills & Prompts (`./skills/` or `./skills-to-edit/`)**: Domain skills and operational templates (reserved per Section 6).
 5. **Companion Documentation (`docs/`)**: Human-readable knowledge repository for event workflows, usher guides, and architecture.
 6. **Workspace Rules**: `agents.md`.
 
-> **Anti-Fabrication Rule**: Agents must never guess or fabricate column coordinates, sheet names, QR payload formats, config keys, or OAuth scopes. Always inspect `Code.js`, `Index.html`, and live sheet headers.
+- **Approved Implementation Plan Precedence**: When executing an explicitly approved implementation plan, that plan governs target-state architecture, locked decisions, phase ordering, and acceptance criteria. Existing code, tests, and live spreadsheet data establish the current-state baseline and do not automatically override an approved migration target.
+- **Anti-Replanning & Debugging Rule**: A completed forensic audit must not be repeated merely because an approved plan intentionally differs from the current implementation. Test failures initiate the prescribed debugging and regression workflow, never automatic replanning.
+
+> **Anti-Fabrication Rule**: Agents must never guess or fabricate column coordinates, sheet names, QR payload formats, config keys, or OAuth scopes. Always inspect `Code.js`, `Index.html`, `docs/index.html`, and (when authorized) live sheet headers.
 
 ## 2. Workspace Context & External Assets
 - **Application Workspace:** `c:\Users\BooozMini\OneDrive\CVSU-CSSO-ATTENDANCE`
@@ -67,7 +70,7 @@ When resolving discrepancies or ambiguous technical specifications, agents must 
       6. `git checkout dev`
 
 ## 4. Google Apps Script & Clasp Development Lifecycle
-1. **Pull First:** Always run `clasp pull` before reading or editing any script file (`Code.js`, `Index.html`, or `appsscript.json`) to prevent overwriting edits made directly in the Apps Script online editor.
+1. **Safe Synchronization Check:** Do NOT run `clasp pull` unconditionally (and never during read-only audits or active local `dev` implementation). Before any synchronization, check `git status`, preserve local changes, and inspect remote/local differences.
 2. **File Modifications:**
    - Write standard modern JavaScript supported by the V8 runtime.
    - Maintain modular organization across functions with clean JSDoc comments.
@@ -76,11 +79,11 @@ When resolving discrepancies or ambiguous technical specifications, agents must 
    - Step 1 (Syntax): `node -c Code.js` must exit with code 0.
    - Step 2 (Regression Tests): Execute `$fail=0; Get-ChildItem tests/*.js | ForEach-Object { node $_.FullName; if ($LASTEXITCODE -ne 0) { $fail=1 } }; exit $fail` and ensure all test suites pass.
    - Step 3 (Deploy Status): Verify tracked files via `clasp status` (only `Code.js`, `Index.html`, and `appsscript.json` tracked; Markdown/docs/tests excluded via `.claspignore`).
-4. **Push & Deploy:**
-   - After passing all verification phases, execute `clasp push` in terminal.
-   - Update the versioned web app deployment when shipping UI/Web App changes:
+4. **Authorized Push, Deploy & Staging E2E:**
+   - `clasp push`, `clasp update-deployment`, GitHub Pages publication (`docs/`), production spreadsheet mutations, and live E2E execution each require their respective explicit user authorization (never execute automatically after local verification).
+   - When authorized to update the versioned web app deployment:
      `clasp update-deployment AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou --description "<summary>"`
-   - Run live Chrome E2E verification per `tests/e2e/E2E_RUNBOOK.md` before real events.
+   - When authorized to run live E2E verification (`tests/e2e/run-live-e2e.js` / `tests/e2e/E2E_RUNBOOK.md`), use isolated staging resources only and enforce the production-sheet safety guard.
 
 ## 5. Google Sheets Schema & Integrity Standards
 1. **Formulas vs. Scripts:**
@@ -134,7 +137,8 @@ This section is reserved for future CSSO Attendance skills, prompt templates, an
 
 ## 7. Master System Upgrades Action ("Implement New Features" Protocol)
 - **Mandatory Master Entry Point**: Maintain a dedicated master function `applyAllSystemUpgrades()` in `Code.js` wired to the very top of the custom spreadsheet menu (`Attendance Scanner` $\to$ `🚀 Implement New Features / Apply All Upgrades`).
-- **Scope of Master Action**: Whenever any new feature, schema upgrade, data validation, conditional formatting rule, trigger, or new workbook sheet/tab is created or updated:
-  - Agents MUST update `applyAllSystemUpgrades()` in `Code.js` so that clicking this single menu item immediately applies all new sheet, config, trigger, and data updates in one go.
+- **Scope of Master Action**: Whenever any applicable workbook, schema, data validation, conditional formatting rule, installable trigger, or new sheet/tab change is created or updated:
+  - Agents MUST update `applyAllSystemUpgrades()` in `Code.js` so that clicking this single menu item immediately applies those spreadsheet updates in one go.
   - Execute steps with per-step `try/catch` fault isolation (e.g., tab/header initialization, conditional formatting, installable triggers, `rebuildVerifiedAttendance_()`, and a consolidated status modal alert summarizing applied updates).
-- **Agent Governance Directive**: The user should never have to manually run multiple script functions or search through submenus to apply newly deployed capabilities.
+  - This requirement applies to workbook/schema/validation/formatting/trigger changes only; it is not an automatic requirement for unrelated backend-only, frontend-only, or test-only work, and does not authorize restricted production operations.
+- **Agent Governance Directive**: The user should never have to manually run multiple script functions or search through submenus to apply newly deployed workbook capabilities.
