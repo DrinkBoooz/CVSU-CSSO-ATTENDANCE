@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://script.google.com https://script.googleusercontent.com; media-src 'self' blob:; base-uri 'self'; form-action 'self';" />
   <title>CvSU CSSO Usher QR Scanner</title>
   <script src="./vendor/html5-qrcode.min.js" defer></script>
   <style>
@@ -180,7 +181,10 @@
 
 <script>
   const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec';
-  const API_URL = new URLSearchParams(window.location.search).get('api') || DEFAULT_API_URL;
+  const GAS_EXEC_RE = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
+  const rawApiParam = (new URLSearchParams(window.location.search).get('api') || '').trim();
+  const UNTRUSTED_API_WARNING = Boolean(rawApiParam && !GAS_EXEC_RE.test(rawApiParam));
+  const API_URL = GAS_EXEC_RE.test(rawApiParam) ? rawApiParam : DEFAULT_API_URL;
   const SESSION_KEY = 'csso_session_token';
   const LOCAL_SEEN_KEY = 'csso_local_seen_v1';
   const SCAN_QUEUE_KEY = 'csso_scan_queue_v1';
@@ -789,6 +793,9 @@
 
   // Check backend health & auto-restore session on page reload
   (async function initSession() {
+    if (UNTRUSTED_API_WARNING) {
+      document.getElementById('pinError').textContent = 'Ignored untrusted ?api= URL; using default official endpoint.';
+    }
     try {
       const ping = await apiCall({ action: 'ping' });
       const note = document.getElementById('apiVersionNote');

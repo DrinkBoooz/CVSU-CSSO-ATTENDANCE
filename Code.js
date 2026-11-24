@@ -12,7 +12,7 @@ const ROSTER_CACHE_TTL_SEC = 300; // 5 minutes
 const DEDUPE_CACHE_TTL_SEC = 3600; // 1 hour (write-through optimization only; Attendance Log is authoritative)
 const EVENT_INDEX_CACHE_PREFIX = "evt_idx_v1_";
 const EMAIL_TIME_BUDGET_MS = 270000; // 4.5 minutes
-const APP_BUILD_VERSION = "2026.11.24-phase4-perf-o1";
+const APP_BUILD_VERSION = "2026.11.24-phase4-hardened";
 
 /**
  * Reads key-value configuration from ScriptProperties (single batched RPC)
@@ -514,15 +514,26 @@ function rosterShardIdx_(normId) {
   return h % ROSTER_SHARD_COUNT;
 }
 
+function hashEmailForCache_(cleanEmail, cfg) {
+  const email = String(cleanEmail || "")
+    .trim()
+    .toLowerCase();
+  if (!email) return "";
+  return cfg && cfg.SECRET_SALT
+    ? hmacSha256Hex_(email, cfg.SECRET_SALT, 16)
+    : sha256HexPrefix_(email, 16);
+}
+
 /**
  * Rebuilds all 16 compact tuple shards ([studentId, fullName, section, emailHash]) from Roster
  * in a single sheet read + single CacheService.putAll() RPC. Scales O(1) to ~22,000+ students.
- * emailHash is kept strictly server-side and stripped before returning snapshot to clients.
+ * emailHash is HMAC-keyed and kept strictly server-side (stripped before returning snapshot).
  */
 function rebuildRosterShards_(ss) {
   const rosterSheet = ss.getSheetByName("Roster");
   if (!rosterSheet) return null;
 
+  const cfg = getConfig_();
   const shards = Array.from({ length: ROSTER_SHARD_COUNT }, () => ({}));
   const lastRow = rosterSheet.getLastRow();
   if (lastRow > 1) {
@@ -542,7 +553,7 @@ function rebuildRosterShards_(ss) {
         rId,
         String(rows[i][2] || "").trim(),
         String(rows[i][3] || "").trim(),
-        cleanEmail ? sha256HexPrefix_(cleanEmail, 16) : "",
+        cleanEmail ? hashEmailForCache_(cleanEmail, cfg) : "",
       ];
     }
   }
@@ -1072,16 +1083,22 @@ function recordScanBatch(sessionToken, scans) {
   const batch = scans.slice(0, 50);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const tz = Session.getScriptTimeZone();
+  const serverNowMs = Date.now();
 
   // Pre-validate every scan's syntax, signature, event binding & Roster OUTSIDE ScriptLock
   const prepared = batch.map((item) => {
     const clientId = String((item && item.clientId) || "");
     const payloadStr = String((item && item.payload) || "");
     const cleanStage = String((item && item.stage) || "").trim();
-    let scanTime = new Date();
+    let scanTime = new Date(serverNowMs);
     if (item && item.scannedAt) {
       const parsed = new Date(item.scannedAt);
-      if (!isNaN(parsed.getTime())) scanTime = parsed;
+      if (
+        !isNaN(parsed.getTime()) &&
+        Math.abs(parsed.getTime() - serverNowMs) <= 86400000
+      ) {
+        scanTime = parsed;
+      }
     }
 
     if (!VALID_STAGES.includes(cleanStage)) {
@@ -1855,6 +1872,19 @@ function lookupStudentPass(studentIdInput, emailInput) {
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const cache = CacheService.getScriptCache();
+  const failKey = `lookup_fail_${normId}`;
+  const currentFails = Number(cache.get(failKey) || "0");
+  if (currentFails >= 15) {
+    Utilities.sleep(1500);
+    return {
+      ok: false,
+      status: "RATE_LIMITED",
+      message:
+        "Too many failed attempts for this ID. Please wait 2 minutes and try again.",
+    };
+  }
+
   const lookup = getRosterEntry_(ss, normId);
   if (lookup.missingSheet) {
     Utilities.sleep(1500);
@@ -1866,7 +1896,7 @@ function lookupStudentPass(studentIdInput, emailInput) {
     };
   }
 
-  const emailHash = sha256HexPrefix_(cleanEmail, 16);
+  const emailHash = hashEmailForCache_(cleanEmail, cfg);
   const entry = lookup.record;
   const matched =
     entry &&
@@ -1876,6 +1906,13 @@ function lookupStudentPass(studentIdInput, emailInput) {
       : null;
 
   if (!matched) {
+    const nextFails = currentFails + 1;
+    cache.put(failKey, String(nextFails), 120);
+    if (nextFails >= 10) {
+      console.warn(
+        `High failed lookupPass volume for ${normId} (${nextFails} in 120s window).`,
+      );
+    }
     Utilities.sleep(1500);
     return {
       ok: false,
@@ -1884,6 +1921,10 @@ function lookupStudentPass(studentIdInput, emailInput) {
         "No matching registration found. Verify your Student ID and the exact email you submitted.",
     };
   }
+
+  try {
+    cache.remove(failKey);
+  } catch (e) {}
 
   const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
   const issueProtocol =

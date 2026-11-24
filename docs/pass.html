@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://script.google.com https://script.googleusercontent.com; media-src 'self' blob:; base-uri 'self'; form-action 'self';" />
   <title>CvSU CSSO — Get Your QR Attendance Pass</title>
   <style>
     * { box-sizing: border-box; }
@@ -120,7 +121,12 @@
 
 <script>
   const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec';
-  const API_URL = new URLSearchParams(window.location.search).get('api') || DEFAULT_API_URL;
+  const GAS_EXEC_RE = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
+  const rawApiParam = (new URLSearchParams(window.location.search).get('api') || '').trim();
+  const API_URL = GAS_EXEC_RE.test(rawApiParam) ? rawApiParam : DEFAULT_API_URL;
+  if (rawApiParam && !GAS_EXEC_RE.test(rawApiParam)) {
+    document.getElementById('errorText').textContent = 'Ignored untrusted ?api= URL; using default official endpoint.';
+  }
   let currentPass = null;
 
   async function fetchPass(ev) {
