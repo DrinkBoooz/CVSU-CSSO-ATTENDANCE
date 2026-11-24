@@ -1505,32 +1505,27 @@ function setupRegistrationFormAndTrigger() {
 
   const idValidation = FormApp.createTextValidation()
     .setHelpText(
-      "Enter a valid Student ID (e.g. 202300328). Letters, numbers, and optional dash only — no spaces.",
+      "Enter a valid Student ID (e.g. 202300328). Letters, numbers, and dashes only — no spaces.",
     )
-    .requireTextMatchesPattern("^[A-Za-z0-9]{4,15}(-[A-Za-z0-9]{1,8})?$")
+    .requireTextMatchesPattern("^[A-Za-z0-9-]+$")
     .build();
 
   const nameValidation = FormApp.createTextValidation()
     .setHelpText(
-      "Enter your full name (3-80 characters, e.g. Dela Cruz, Juan M.). Letters, spaces, commas, periods, and hyphens only.",
+      "Enter your full name (e.g. Dela Cruz, Juan M.). Letters, spaces, commas, periods, and hyphens only.",
     )
-    .requireTextMatchesPattern(
-      "^[A-Za-z\\u00C0-\\u00FF][A-Za-z\\u00C0-\\u00FF .,'\\-]{2,79}$",
-    )
+    .requireTextMatchesPattern("^[A-Za-z .,'-]+$")
     .build();
 
   const sectionValidation = FormApp.createTextValidation()
     .setHelpText(
       "Enter your Course & Section (e.g. BSCS 3-1, BSCS 4-4, or BSCS-3A).",
     )
-    .requireTextMatchesPattern(
-      "^[A-Za-z]{2,10}[\\s\\-]?[1-5][\\s\\-]?[A-Za-z0-9]{1,3}$",
-    )
+    .requireTextMatchesPattern("^[A-Za-z]{2,10}[ -]?[1-5][ -]?[A-Za-z0-9]{1,3}$")
     .build();
 
   if (!form) {
     form = FormApp.create(`${cfg.EVENT_TITLE} - Student Registration`);
-    form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
     formId = form.getId();
     props.setProperty("REGISTRATION_FORM_ID", formId);
     createdNew = true;
@@ -1566,15 +1561,22 @@ function setupRegistrationFormAndTrigger() {
     const textItem = existingItem
       ? existingItem.asTextItem()
       : form.addTextItem().setTitle(title);
-    textItem
-      .setHelpText(helpText)
-      .setRequired(true)
-      .setValidation(validation);
+    textItem.setHelpText(helpText).setRequired(true);
+    try {
+      textItem.setValidation(validation);
+    } catch (valErr) {
+      console.warn(`Validation skipped for ${title}: ${valErr}`);
+    }
   };
 
   ensureTextQuestion("Student ID", "Example: 202300328", idValidation);
   ensureTextQuestion("Full Name", "Example: Dela Cruz, Juan M.", nameValidation);
   ensureTextQuestion("Section", "Example: BSCS 3-1", sectionValidation);
+
+  // Link destination AFTER all questions exist so all columns (including Section) are created cleanly
+  if (createdNew) {
+    form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
+  }
 
   // Install/replace the onFormSubmit trigger under the currently active user
   const existing = ScriptApp.getProjectTriggers();
@@ -1644,11 +1646,31 @@ function replaceRegistrationForm() {
     return { ok: false, reason: "CANCELLED" };
   }
 
-  let oldFormUrl = "";
+  // Capture any Form-linked response tabs BEFORE unlinking (works in ALL locales: English, Filipino, etc.)
+  const coreTabs = new Set([
+    "Config",
+    "Roster",
+    "Attendance Log",
+    "Verified Attendance",
+  ]);
+  const tabsToDelete = [];
+  const sheetsBefore = ss.getSheets();
+  for (let i = 0; i < sheetsBefore.length; i++) {
+    const s = sheetsBefore[i];
+    const name = s.getName();
+    if (coreTabs.has(name)) continue;
+    const linkedUrl = s.getFormUrl ? s.getFormUrl() : null;
+    const isOrphanRespTab = /^(Form Responses|Mga Tugon sa Form)(\s+\d+)?$/i.test(
+      name,
+    );
+    if (linkedUrl || isOrphanRespTab) {
+      tabsToDelete.push(s);
+    }
+  }
+
   if (oldFormId) {
     try {
       const oldForm = FormApp.openById(oldFormId);
-      oldFormUrl = oldForm.getPublishedUrl() || "";
       try {
         oldForm.removeDestination();
       } catch (e) {}
@@ -1661,15 +1683,14 @@ function replaceRegistrationForm() {
     }
   }
 
-  // Delete any old Form Responses tab linked to the old form (or matching Form Responses*)
-  const sheets = ss.getSheets();
-  for (let i = 0; i < sheets.length; i++) {
-    const s = sheets[i];
-    const formUrl = s.getFormUrl ? s.getFormUrl() : null;
-    const isOldLinked = oldFormUrl && formUrl && formUrl === oldFormUrl;
-    const isFormRespTab = /^Form Responses \d+$/i.test(s.getName());
-    if ((isOldLinked || (!oldFormUrl && isFormRespTab)) && ss.getSheets().length > 1) {
-      ss.deleteSheet(s);
+  // Delete captured Form response tabs now that destination is unlinked
+  for (let i = 0; i < tabsToDelete.length; i++) {
+    try {
+      if (ss.getSheets().length > 1) {
+        ss.deleteSheet(tabsToDelete[i]);
+      }
+    } catch (e) {
+      console.warn("Could not delete old response tab:", e);
     }
   }
 
@@ -2683,6 +2704,9 @@ function backfillRosterTokens_(ss) {
   const cfg = getConfig_();
   requireSecureConfig_(cfg);
 
+  const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
+  const useV2 = cfg.V1_COMPAT_RETIRED || cfg.EVENT_ID !== compatEventId;
+
   const count = rosterSheet.getLastRow() - 1;
   const idsAndTokens = rosterSheet.getRange(2, 1, count, 5).getValues();
   const tokenCol = [];
@@ -2693,7 +2717,9 @@ function backfillRosterTokens_(ss) {
       .toUpperCase();
     const existing = String(idsAndTokens[i][4] || "").trim();
     const expected = studentId
-      ? createSignature_(studentId, cfg.SECRET_SALT)
+      ? useV2
+        ? createV2Signature_(cfg.EVENT_ID, studentId, cfg.SECRET_SALT)
+        : createSignature_(studentId, cfg.SECRET_SALT)
       : "";
     if (studentId && existing !== expected) {
       tokenCol.push([expected]);
