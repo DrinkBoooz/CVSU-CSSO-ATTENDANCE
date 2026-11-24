@@ -640,7 +640,14 @@
             return;
           }
           if (!html5QrCode) {
-            html5QrCode = new Html5Qrcode("reader");
+            const qrOpts = { useBarCodeDetectorIfSupported: true };
+            if (
+              typeof Html5QrcodeSupportedFormats !== "undefined" &&
+              Html5QrcodeSupportedFormats.QR_CODE !== undefined
+            ) {
+              qrOpts.formatsToSupport = [Html5QrcodeSupportedFormats.QR_CODE];
+            }
+            html5QrCode = new Html5Qrcode("reader", qrOpts);
           }
           if (html5QrCode.isScanning) {
             await stopCamera();
@@ -649,7 +656,7 @@
 
           statusEl.textContent = "Starting camera...";
           const scanConfig = {
-            fps: 10,
+            fps: 15,
             qrbox: (vw, vh) => {
               const s = Math.max(
                 140,

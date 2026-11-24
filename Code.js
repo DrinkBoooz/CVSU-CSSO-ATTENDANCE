@@ -10,17 +10,24 @@ const ROSTER_SHARD_COUNT = 16;
 const ROSTER_SHARD_PREFIX = "roster_v2_s";
 const ROSTER_CACHE_TTL_SEC = 300; // 5 minutes
 const DEDUPE_CACHE_TTL_SEC = 3600; // 1 hour (write-through optimization only; Attendance Log is authoritative)
+const CONFIG_CACHE_KEY = "config_public_v1";
+const CONFIG_CACHE_TTL_SEC = 60; // 60s cache for non-secret Config keys (invalidated on Config edit)
 const EVENT_INDEX_CACHE_PREFIX = "evt_idx_v1_";
 const EMAIL_TIME_BUDGET_MS = 270000; // 4.5 minutes
 const APP_BUILD_VERSION = "2026.11.24-phase4-hardened";
 
+function invalidateConfigCache_() {
+  try {
+    CacheService.getScriptCache().remove(CONFIG_CACHE_KEY);
+  } catch (e) {}
+}
+
 /**
  * Reads key-value configuration from ScriptProperties (single batched RPC)
- * and the Config tab (bounded A1:B25 read, with pre-migration secret fallback).
+ * and the Config tab (60s CacheService cache for non-secret keys when secrets
+ * are migrated to ScriptProperties; direct bounded A1:B25 read otherwise).
  */
 function getConfig_() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sheet = ss.getSheetByName("Config");
   const map = {
     USHER_PIN: "",
     SECRET_SALT: "",
@@ -35,41 +42,86 @@ function getConfig_() {
     ENFORCE_STAGE_ORDER: false,
     REQUIRE_MID_EVENT: true,
   };
-  if (sheet) {
-    const lastRow = sheet.getLastRow();
-    if (lastRow > 0) {
-      const rows = sheet.getRange(1, 1, Math.min(lastRow, 25), 2).getValues();
-      for (let i = 0; i < rows.length; i++) {
-        const key = String(rows[i][0] || "").trim();
-        const val = String(rows[i][1] === undefined || rows[i][1] === null ? "" : rows[i][1]).trim();
-        if (key && key !== "Key" && val !== "") {
-          if (key === "ENFORCE_STAGE_ORDER") {
-            map[key] = val.toUpperCase() === "TRUE";
-          } else if (key === "REQUIRE_MID_EVENT") {
-            map[key] = val.toUpperCase() !== "FALSE";
-          } else {
-            map[key] = val;
+
+  let allProps = {};
+  try {
+    allProps = PropertiesService.getScriptProperties().getProperties() || {};
+  } catch (e) {
+    // ignore ScriptProperties read error in constrained environments
+  }
+
+  const secretsMigrated = Boolean(allProps.USHER_PIN && allProps.SECRET_SALT);
+  let loadedFromCache = false;
+  if (secretsMigrated) {
+    try {
+      const cached = CacheService.getScriptCache().get(CONFIG_CACHE_KEY);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && typeof parsed === "object") {
+          Object.assign(map, parsed);
+          loadedFromCache = true;
+        }
+      }
+    } catch (e) {}
+  }
+
+  if (!loadedFromCache) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName("Config");
+    const publicFields = {};
+    if (sheet) {
+      const lastRow = sheet.getLastRow();
+      if (lastRow > 0) {
+        const rows = sheet.getRange(1, 1, Math.min(lastRow, 25), 2).getValues();
+        for (let i = 0; i < rows.length; i++) {
+          const key = String(rows[i][0] || "").trim();
+          const val = String(
+            rows[i][1] === undefined || rows[i][1] === null ? "" : rows[i][1],
+          ).trim();
+          if (key && key !== "Key" && val !== "") {
+            let parsedVal = val;
+            if (key === "ENFORCE_STAGE_ORDER") {
+              parsedVal = val.toUpperCase() === "TRUE";
+            } else if (key === "REQUIRE_MID_EVENT") {
+              parsedVal = val.toUpperCase() !== "FALSE";
+            }
+            map[key] = parsedVal;
+            if (
+              key !== "USHER_PIN" &&
+              key !== "SECRET_SALT" &&
+              key !== "LEGACY_SECRET_SALT"
+            ) {
+              publicFields[key] = parsedVal;
+            }
           }
         }
       }
     }
+    if (secretsMigrated) {
+      try {
+        CacheService.getScriptCache().put(
+          CONFIG_CACHE_KEY,
+          JSON.stringify(publicFields),
+          CONFIG_CACHE_TTL_SEC,
+        );
+      } catch (e) {}
+    }
   }
 
-  try {
-    const allProps = PropertiesService.getScriptProperties().getProperties() || {};
-    if (allProps.USHER_PIN) map.USHER_PIN = String(allProps.USHER_PIN).trim();
-    if (allProps.SECRET_SALT) map.SECRET_SALT = String(allProps.SECRET_SALT).trim();
-    if (allProps.LEGACY_SECRET_SALT) map.LEGACY_SECRET_SALT = String(allProps.LEGACY_SECRET_SALT).trim();
-    if (allProps.V1_COMPAT_EVENT_ID) map.V1_COMPAT_EVENT_ID = String(allProps.V1_COMPAT_EVENT_ID).trim();
-    if (allProps.V1_COMPAT_RETIRED)
-      map.V1_COMPAT_RETIRED = String(allProps.V1_COMPAT_RETIRED).trim().toUpperCase() === "TRUE";
-    if (allProps.TARGET_EVENT_ID) map.TARGET_EVENT_ID = String(allProps.TARGET_EVENT_ID).trim();
-    if (allProps.EVENT_TRANSITION_PENDING)
-      map.EVENT_TRANSITION_PENDING =
-        String(allProps.EVENT_TRANSITION_PENDING).trim().toUpperCase() === "TRUE";
-  } catch (e) {
-    // ignore ScriptProperties read error in constrained environments
-  }
+  if (allProps.USHER_PIN) map.USHER_PIN = String(allProps.USHER_PIN).trim();
+  if (allProps.SECRET_SALT) map.SECRET_SALT = String(allProps.SECRET_SALT).trim();
+  if (allProps.LEGACY_SECRET_SALT)
+    map.LEGACY_SECRET_SALT = String(allProps.LEGACY_SECRET_SALT).trim();
+  if (allProps.V1_COMPAT_EVENT_ID)
+    map.V1_COMPAT_EVENT_ID = String(allProps.V1_COMPAT_EVENT_ID).trim();
+  if (allProps.V1_COMPAT_RETIRED)
+    map.V1_COMPAT_RETIRED =
+      String(allProps.V1_COMPAT_RETIRED).trim().toUpperCase() === "TRUE";
+  if (allProps.TARGET_EVENT_ID)
+    map.TARGET_EVENT_ID = String(allProps.TARGET_EVENT_ID).trim();
+  if (allProps.EVENT_TRANSITION_PENDING)
+    map.EVENT_TRANSITION_PENDING =
+      String(allProps.EVENT_TRANSITION_PENDING).trim().toUpperCase() === "TRUE";
   return map;
 }
 
@@ -701,12 +753,15 @@ function onSheetEdit(e) {
     } else if (name === "Attendance Log") {
       const cfg = getConfig_();
       invalidateEventSeenIndex_(cfg.EVENT_ID);
-    } else if (name === "Config" && e.range.getRow) {
-      const editedRow = e.range.getRow();
-      if (editedRow > 1) {
-        const editedKey = String(sheet.getRange(editedRow, 1).getValue() || "").trim();
-        if (editedKey === "PORTAL_BASE_URL" || editedKey === "WEB_APP_URL") {
-          syncPortalLinksToConfig_(SpreadsheetApp.getActiveSpreadsheet());
+    } else if (name === "Config") {
+      invalidateConfigCache_();
+      if (e.range.getRow) {
+        const editedRow = e.range.getRow();
+        if (editedRow > 1) {
+          const editedKey = String(sheet.getRange(editedRow, 1).getValue() || "").trim();
+          if (editedKey === "PORTAL_BASE_URL" || editedKey === "WEB_APP_URL") {
+            syncPortalLinksToConfig_(SpreadsheetApp.getActiveSpreadsheet());
+          }
         }
       }
     } else if (name === "List") {
@@ -3393,6 +3448,7 @@ function ensureConfigKeys_(ss) {
   const parts = [];
   if (toAdd.length) parts.push(`Added ${toAdd.map((r) => r[0]).join(", ")}`);
   if (filled.length) parts.push(`Populated ${filled.join(", ")}`);
+  invalidateConfigCache_();
   return parts.length ? parts.join("; ") : "All keys present";
 }
 
@@ -4286,6 +4342,7 @@ function transitionToTargetEvent() {
       .getRange(configSheet.getLastRow() + 1, 1, 1, 3)
       .setValues([["EVENT_ID", targetId, "Active event ID"]]);
   }
+  invalidateConfigCache_();
 
   // Step 6: Self-verify target v2 signature acceptance & v1 rejection
   const afterCfg = getConfig_();
