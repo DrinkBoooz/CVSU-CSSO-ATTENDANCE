@@ -246,6 +246,10 @@
     document.addEventListener('invalid', (e) => sync(e.target), true);
   })();
 
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  }
+
 // CSP-safe declarative handler binding (replaces inline on* attributes; no eval).
 (function bindDeclarativeHandlers() {
   function parseCall(spec) {

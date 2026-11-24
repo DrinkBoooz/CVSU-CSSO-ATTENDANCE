@@ -19,6 +19,8 @@
       const SESSION_KEY = "csso_session_token";
       const LOCAL_SEEN_KEY = "csso_local_seen_v1";
       const SCAN_QUEUE_KEY = "csso_scan_queue_v1";
+      const SNAPSHOT_CACHE_KEY = "csso_snapshot_v1";
+      const SNAPSHOT_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
       const STAGE_BITS = { "Check-In": 1, "Mid-Event": 2, "Check-Out": 4 };
       const CAMERA_COOLDOWN_MS = 4000;
       const FETCH_TIMEOUT_MS = 15000;
@@ -132,32 +134,95 @@
         }
       }
 
+      function getSnapshotCacheKey() {
+        try {
+          const hash = btoa(unescape(encodeURIComponent(API_URL)))
+            .replace(/[^A-Za-z0-9]/g, "")
+            .slice(-16);
+          return `${SNAPSHOT_CACHE_KEY}_${hash}`;
+        } catch (e) {
+          return SNAPSHOT_CACHE_KEY;
+        }
+      }
+
+      function saveOfflineSnapshot(snap) {
+        if (!snap || !snap.roster) return;
+        try {
+          localStorage.setItem(
+            getSnapshotCacheKey(),
+            JSON.stringify({
+              eventTitle: snap.eventTitle || "",
+              eventId: snap.eventId || activeEventId,
+              lockedStage: snap.lockedStage || "AUTO",
+              enforceStageOrder: !!snap.enforceStageOrder,
+              requireMidEvent: snap.requireMidEvent !== false,
+              v1Retired: !!snap.v1Retired,
+              v1CompatEventId: snap.v1CompatEventId || "DEFAULT",
+              roster: snap.roster,
+              seen: snap.seen || {},
+              savedAt: Date.now(),
+            }),
+          );
+        } catch (e) {}
+      }
+
+      function loadOfflineSnapshot() {
+        try {
+          const raw = localStorage.getItem(getSnapshotCacheKey());
+          if (!raw) return null;
+          const snap = JSON.parse(raw);
+          if (!snap || !snap.roster) return null;
+          if (snap.savedAt && Date.now() - Number(snap.savedAt) > SNAPSHOT_TTL_MS) {
+            localStorage.removeItem(getSnapshotCacheKey());
+            return null;
+          }
+          return snap;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function clearOfflineSnapshot() {
+        try {
+          localStorage.removeItem(getSnapshotCacheKey());
+        } catch (e) {}
+      }
+
+      function applySnapshotData(snap) {
+        const prevEventId = activeEventId;
+        snapshotRoster = snap.roster || {};
+        snapshotSeen = snap.seen || {};
+        snapshotEnforceOrder = !!snap.enforceStageOrder;
+        snapshotRequireMidEvent = snap.requireMidEvent !== false;
+        const midPill = document.querySelector('.stage-pill[data-stage="Mid-Event"]');
+        if (midPill) {
+          midPill.textContent = snapshotRequireMidEvent
+            ? "Mid-Event"
+            : "Mid-Event (Optional)";
+        }
+        snapshotV1Retired = !!snap.v1Retired;
+        snapshotV1CompatEventId = snap.v1CompatEventId || "DEFAULT";
+        snapshotLockedStage = snap.lockedStage || "AUTO";
+        activeEventId = snap.eventId || activeEventId;
+        if (activeEventId !== prevEventId) {
+          loadScanQueue();
+        }
+        snapshotReady = true;
+        applyStageLockUI(snapshotLockedStage, activeEventId);
+        updateSyncUI();
+      }
+
       async function loadSnapshot() {
         if (!sessionToken) return;
+        if (!snapshotReady) {
+          const cached = loadOfflineSnapshot();
+          if (cached) applySnapshotData(cached);
+        }
         try {
           const snap = await apiCall({ action: "snapshot", sessionToken });
           if (snap && snap.ok) {
-            const prevEventId = activeEventId;
-            snapshotRoster = snap.roster || {};
-            snapshotSeen = snap.seen || {};
-            snapshotEnforceOrder = !!snap.enforceStageOrder;
-            snapshotRequireMidEvent = snap.requireMidEvent !== false;
-            const midPill = document.querySelector('.stage-pill[data-stage="Mid-Event"]');
-            if (midPill) {
-              midPill.textContent = snapshotRequireMidEvent
-                ? "Mid-Event"
-                : "Mid-Event (Optional)";
-            }
-            snapshotV1Retired = !!snap.v1Retired;
-            snapshotV1CompatEventId = snap.v1CompatEventId || "DEFAULT";
-            snapshotLockedStage = snap.lockedStage || "AUTO";
-            activeEventId = snap.eventId || activeEventId;
-            if (activeEventId !== prevEventId) {
-              loadScanQueue();
-            }
-            snapshotReady = true;
-            applyStageLockUI(snapshotLockedStage, activeEventId);
-            updateSyncUI();
+            applySnapshotData(snap);
+            saveOfflineSnapshot(snap);
           }
         } catch (e) {
           updateSyncUI();
@@ -549,6 +614,7 @@
           sessionStorage.removeItem(SESSION_KEY);
           sessionStorage.removeItem(LOCAL_SEEN_KEY);
         } catch (e) {}
+        clearOfflineSnapshot();
         document.getElementById("scannerScreen").style.display = "none";
         document.getElementById("pinScreen").style.display = "block";
         document.getElementById("pinInput").value = "";
@@ -1219,9 +1285,26 @@
             returnToPinScreen("");
           }
         } catch (e) {
-          returnToPinScreen("");
+          const cached = loadOfflineSnapshot();
+          if (cached) {
+            sessionToken = saved;
+            document.getElementById("pinError").textContent = "";
+            applyScannerState({
+              ok: true,
+              eventTitle: cached.eventTitle || "Event Scanner",
+              eventId: cached.eventId || "DEFAULT",
+              lockedStage: cached.lockedStage || "AUTO",
+            });
+            applySnapshotData(cached);
+          } else {
+            returnToPinScreen("");
+          }
         }
       })();
+
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("./sw.js").catch(() => {});
+      }
 
       // Lightweight :user-invalid <-> aria-invalid sync after interaction
       (function initFieldValidationAria() {
