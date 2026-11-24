@@ -133,6 +133,69 @@ function run() {
     assert.strictEqual(env.ctx.getConfig_().REQUIRE_MID_EVENT, false);
   }
 
+  // 3. Natural Section -> Full Name sorting, Section Summary bounded formulas, splitVerifiedAttendanceBySection & removeSectionTabs
+  {
+    const env = loadCode({
+      sheets: {
+        Config: [
+          ['Key', 'Value', 'Notes'],
+          ['USHER_PIN', '619482', ''],
+          ['SECRET_SALT', 'fedcba9876543210fedcba9876543210', ''],
+          ['EVENT_ID', 'EVT-2026', '']
+        ],
+        Roster: [
+          ['Student ID', 'Email', 'Full Name', 'Section', 'Token', 'Pass Status'],
+          ['202310004', 'd@cvsu.edu.ph', 'Zara Unassigned', '', '', 'READY_ON_PORTAL'],
+          ['202310003', 'c@cvsu.edu.ph', 'Carlos Ten', 'BSCS 1-10', '', 'READY_ON_PORTAL'],
+          ['202310001', 'a@cvsu.edu.ph', 'Zed Two', 'BSCS 1-2', '', 'READY_ON_PORTAL'],
+          ['202310002', 'b@cvsu.edu.ph', 'Ana Two', 'BSCS 1-2', '', 'READY_ON_PORTAL']
+        ],
+        'Attendance Log': [
+          ['Timestamp', 'Stage', 'Student ID', 'Full Name', 'Section', 'Usher Label', 'Scan Status', 'Event ID']
+        ],
+        'Verified Attendance': [
+          ['Student ID', 'Full Name', 'Section', 'Check-In', 'Mid-Event', 'Check-Out', 'Qualification', 'Stage Count']
+        ]
+      }
+    });
+
+    env.ctx.applyAllSystemUpgrades();
+
+    // Verified Attendance sorted naturally: BSCS 1-2 (Ana then Zed) -> BSCS 1-10 -> blank section last
+    const verRows = env.sheets.get('Verified Attendance')._data.slice(1).map(r => `${r[2]}|${r[1]}`);
+    assert.deepStrictEqual(verRows, [
+      'BSCS 1-2|Ana Two',
+      'BSCS 1-2|Zed Two',
+      'BSCS 1-10|Carlos Ten',
+      '|Zara Unassigned'
+    ]);
+
+    // Section Summary created with bounded 2:5000 native formulas & Filter dropdown
+    const sumSheet = env.sheets.get('Section Summary');
+    assert.ok(sumSheet, 'Section Summary tab must exist');
+    assert.ok(String(sumSheet._data[1][0]).includes("'Verified Attendance'!C2:C5000"));
+    assert.ok(String(sumSheet._data[1][2]).includes('"QUALIFIED"'));
+    assert.strictEqual(sumSheet._data[0][6], 'Filter Section:');
+    assert.ok(String(sumSheet._data[2][6]).includes('FILTER'));
+
+    // Split Verified Attendance into per-section tabs
+    const split = env.ctx.splitVerifiedAttendanceBySection();
+    assert.strictEqual(split.ok, true);
+    assert.deepStrictEqual(Array.from(split.tabs), ['Sec - BSCS 1-2', 'Sec - BSCS 1-10', 'Sec - Unassigned']);
+    assert.strictEqual(env.sheets.get('Sec - BSCS 1-2')._data.length, 3); // header + 2 rows
+    assert.strictEqual(env.sheets.get('Sec - BSCS 1-2')._data[1][1], 'Ana Two');
+    assert.strictEqual(env.sheets.get('Sec - Unassigned')._data[1][1], 'Zara Unassigned');
+
+    // Remove per-section tabs deletes ONLY Sec - * tabs
+    const rem = env.ctx.removeSectionTabs();
+    assert.strictEqual(rem.ok, true);
+    assert.strictEqual(rem.removed, 3);
+    assert.strictEqual(env.sheets.has('Sec - BSCS 1-2'), false);
+    assert.strictEqual(env.sheets.has('Verified Attendance'), true);
+    assert.strictEqual(env.sheets.has('Section Summary'), true);
+    assert.strictEqual(env.sheets.has('List'), true);
+  }
+
   console.log('PASS: rebuild.test.js');
 }
 
