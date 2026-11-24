@@ -8,6 +8,7 @@ const SHELL_ASSETS = [
   "./pass.css",
   "./pass.js",
   "./config.js",
+  "./common.js",
   "./vendor/html5-qrcode.min.js",
 ];
 

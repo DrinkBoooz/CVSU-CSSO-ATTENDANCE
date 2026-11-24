@@ -9,7 +9,7 @@
   },
   "scripts": {
     "setup": "npm ci && npx playwright install chromium && npm test",
-    "test": "node -c Code.js && node -c QrEncoder.js && node -c docs/config.js && node -c docs/scanner.js && node -c docs/pass.js && node -c docs/sw.js && node tests/crypto-migration.test.js && node tests/dopost.test.js && node tests/e2e-guard.test.js && node tests/email.test.js && node tests/form-portal.test.js && node tests/qr-encoder.test.js && node tests/rebuild.test.js && node tests/record-scan.test.js && node tests/session-pin.test.js && node tests/signature.test.js && node tests/upgrades.test.js && node tests/browser/scanner.spec.js && node tests/browser/pass.spec.js"
+    "test": "node -c Code.js && node -c QrEncoder.js && node -c docs/config.js && node -c docs/common.js && node -c docs/scanner.js && node -c docs/pass.js && node -c docs/sw.js && node tests/crypto-migration.test.js && node tests/dopost.test.js && node tests/e2e-guard.test.js && node tests/email.test.js && node tests/form-portal.test.js && node tests/qr-encoder.test.js && node tests/rebuild.test.js && node tests/record-scan.test.js && node tests/session-pin.test.js && node tests/signature.test.js && node tests/upgrades.test.js && node tests/browser/scanner.spec.js && node tests/browser/pass.spec.js"
   },
   "repository": {
     "type": "git",

@@ -550,55 +550,6 @@ function getScannerState(sessionToken) {
   };
 }
 
-/**
- * Returns a normalized Student ID -> student record map, cached for 5 minutes.
- * Pass forceRefresh=true on cache miss to guarantee newly added walk-in rows are seen immediately.
- */
-function getRosterMap_(ss, forceRefresh) {
-  const cache = CacheService.getScriptCache();
-  if (!forceRefresh) {
-    const cached = cache.get(ROSTER_CACHE_KEY);
-    if (cached) {
-      try {
-        return JSON.parse(cached);
-      } catch (e) {
-        // fall through to sheet read
-      }
-    }
-  }
-
-  const rosterSheet = ss.getSheetByName("Roster");
-  if (!rosterSheet) return null;
-
-  const map = {};
-  const lastRow = rosterSheet.getLastRow();
-  if (lastRow > 1) {
-    const rows = rosterSheet.getRange(2, 1, lastRow - 1, 4).getValues();
-    for (let i = 0; i < rows.length; i++) {
-      const rId = String(rows[i][0] || "")
-        .trim()
-        .toUpperCase();
-      const normId = normalizeId_(rId);
-      if (!normId || map[normId]) continue; // preserve first entry on duplicate normalized ID
-      map[normId] = {
-        studentId: rId,
-        fullName: String(rows[i][2] || "").trim(),
-        section: String(rows[i][3] || "").trim(),
-      };
-    }
-  }
-
-  try {
-    const serialized = JSON.stringify(map);
-    if (serialized.length <= 90000) {
-      cache.put(ROSTER_CACHE_KEY, serialized, ROSTER_CACHE_TTL_SEC);
-    }
-  } catch (e) {
-    // ignore cache write failure
-  }
-  return map;
-}
-
 function rosterShardIdx_(normId) {
   let h = 2166136261;
   const s = String(normId || "");
@@ -830,28 +781,110 @@ function invalidateEventSeenIndex_(eventId) {
   } catch (e) {}
 }
 
-function dedupeCacheKey_(eventId, normId) {
-  return `evt_seen_${eventId}_${normId}`;
+function extractPayloadHintId_(payloadStr) {
+  const parts = String(payloadStr || "")
+    .trim()
+    .split("|");
+  return (parts[0] === "v2" && parts.length >= 3 ? parts[2] : parts[0])
+    .trim()
+    .toUpperCase();
 }
 
-function getCachedSeenStages_(eventId, normId) {
-  try {
-    const raw = CacheService.getScriptCache().get(
-      dedupeCacheKey_(eventId, normId),
-    );
-    if (raw) return JSON.parse(raw);
-  } catch (e) {}
-  return null;
-}
+/**
+ * Single source of truth for v2 (HMAC-SHA256) and legacy v1 (SHA-256) QR payload
+ * parsing, event binding, retirement checks, and cryptographic verification.
+ */
+function parseAndVerifyPayload_(payloadStr, cfg) {
+  const rawPayload = String(payloadStr || "");
+  const parts = rawPayload.split("|");
 
-function putCachedSeenStages_(eventId, normId, seenStages) {
-  try {
-    CacheService.getScriptCache().put(
-      dedupeCacheKey_(eventId, normId),
-      JSON.stringify(seenStages),
-      DEDUPE_CACHE_TTL_SEC,
-    );
-  } catch (e) {}
+  if (parts[0] === "v2") {
+    if (parts.length !== 4) {
+      return {
+        ok: false,
+        rawId: rawPayload.trim().substring(0, 40),
+        status: "REJECTED_MALFORMED",
+        message: "Malformed v2 QR payload.",
+      };
+    }
+    const [, evId, sid, hmac] = parts;
+    try {
+      validateV2Field_(evId, "EVENT_ID");
+      validateV2Field_(sid, "STUDENT_ID");
+    } catch (fieldErr) {
+      return {
+        ok: false,
+        rawId: rawPayload.trim().substring(0, 40),
+        status: "REJECTED_MALFORMED",
+        message: fieldErr.message,
+      };
+    }
+    if (!hmac || hmac !== hmac.trim()) {
+      return {
+        ok: false,
+        rawId: sid,
+        status: "REJECTED_MALFORMED",
+        message: "Malformed v2 HMAC.",
+      };
+    }
+    const normId = normalizeId_(sid);
+    if (evId !== cfg.EVENT_ID) {
+      return {
+        ok: false,
+        rawId: sid,
+        status: "REJECTED_WRONG_EVENT",
+        message: `Pass belongs to event "${evId}", not "${cfg.EVENT_ID}".`,
+      };
+    }
+    if (!verifyV2Signature_(evId, sid, hmac, cfg)) {
+      return {
+        ok: false,
+        rawId: sid,
+        status: "REJECTED_FORGED",
+        message: "Forged or tampered v2 QR token.",
+      };
+    }
+    return { ok: true, rawId: sid, normId };
+  }
+
+  // Legacy v1: STUDENTID|10-HEX
+  if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+    return {
+      ok: false,
+      rawId: rawPayload.trim().substring(0, 40),
+      status: "REJECTED_MALFORMED",
+      message: "Malformed QR payload.",
+    };
+  }
+  const rawId = parts[0].trim().toUpperCase();
+  const scannedToken = parts[1].trim().toUpperCase();
+  const normId = normalizeId_(rawId);
+  if (cfg.V1_COMPAT_RETIRED) {
+    return {
+      ok: false,
+      rawId,
+      status: "REJECTED_V1_RETIRED",
+      message: "Legacy v1 passes have been permanently retired.",
+    };
+  }
+  const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
+  if (cfg.EVENT_ID !== compatEventId) {
+    return {
+      ok: false,
+      rawId,
+      status: "REJECTED_WRONG_EVENT",
+      message: `Legacy v1 passes are only valid for ${compatEventId}.`,
+    };
+  }
+  if (!verifyLegacyV1Signature_(rawId, scannedToken, cfg)) {
+    return {
+      ok: false,
+      rawId,
+      status: "REJECTED_FORGED",
+      message: "Forged or tampered QR token.",
+    };
+  }
+  return { ok: true, rawId, normId };
 }
 
 function checkStageOrderError_(stage, seenMask, cfg) {
@@ -925,116 +958,19 @@ function recordScan(sessionToken, payloadStr, stage) {
     cfg.LOCKED_STAGE !== "AUTO" &&
     cleanStage !== cfg.LOCKED_STAGE
   ) {
-    const hintParts = String(payloadStr || "")
-      .trim()
-      .split("|");
-    const rawHint = (
-      hintParts[0] === "v2" && hintParts.length >= 3
-        ? hintParts[2]
-        : hintParts[0]
-    )
-      .trim()
-      .toUpperCase();
-    logRejectedLocked(rawHint, "REJECTED_STAGE_LOCKED");
+    logRejectedLocked(extractPayloadHintId_(payloadStr), "REJECTED_STAGE_LOCKED");
     return {
       status: "REJECTED_STAGE_LOCKED",
       message: `Scanner is locked to ${cfg.LOCKED_STAGE}.`,
     };
   }
 
-  const rawPayload = String(payloadStr || "");
-  const parts = rawPayload.split("|");
-
-  let rawId = "";
-  let normId = "";
-
-  if (parts[0] === "v2") {
-    // Canonical v2|EVENT_ID|STUDENT_ID|HMAC — strict 4 segments, no silent field modification
-    if (parts.length !== 4) {
-      logRejectedLocked(
-        rawPayload.trim().substring(0, 40),
-        "REJECTED_MALFORMED",
-      );
-      return {
-        status: "REJECTED_MALFORMED",
-        message: "Malformed v2 QR payload.",
-      };
-    }
-    const [, evId, sid, hmac] = parts;
-    try {
-      validateV2Field_(evId, "EVENT_ID");
-      validateV2Field_(sid, "STUDENT_ID");
-    } catch (fieldErr) {
-      logRejectedLocked(
-        rawPayload.trim().substring(0, 40),
-        "REJECTED_MALFORMED",
-      );
-      return { status: "REJECTED_MALFORMED", message: fieldErr.message };
-    }
-    if (!hmac || hmac !== hmac.trim()) {
-      logRejectedLocked(sid, "REJECTED_MALFORMED");
-      return { status: "REJECTED_MALFORMED", message: "Malformed v2 HMAC." };
-    }
-
-    rawId = sid;
-    normId = normalizeId_(rawId);
-
-    // Strict EVENT_ID validation before accepting either SECRET_SALT or LEGACY_SECRET_SALT
-    if (evId !== cfg.EVENT_ID) {
-      logRejectedLocked(rawId, "REJECTED_WRONG_EVENT");
-      return {
-        status: "REJECTED_WRONG_EVENT",
-        message: `Pass belongs to event "${evId}", not "${cfg.EVENT_ID}".`,
-      };
-    }
-
-    if (!verifyV2Signature_(evId, sid, hmac, cfg)) {
-      logRejectedLocked(rawId, "REJECTED_FORGED");
-      return {
-        status: "REJECTED_FORGED",
-        message: "Forged or tampered v2 QR token.",
-      };
-    }
-  } else {
-    // Legacy v1: STUDENTID|10-HEX
-    if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
-      logRejectedLocked(
-        rawPayload.trim().substring(0, 40),
-        "REJECTED_MALFORMED",
-      );
-      return {
-        status: "REJECTED_MALFORMED",
-        message: "Malformed QR payload.",
-      };
-    }
-
-    rawId = parts[0].trim().toUpperCase();
-    const scannedToken = parts[1].trim().toUpperCase();
-    normId = normalizeId_(rawId);
-
-    if (cfg.V1_COMPAT_RETIRED) {
-      logRejectedLocked(rawId, "REJECTED_V1_RETIRED");
-      return {
-        status: "REJECTED_V1_RETIRED",
-        message: "Legacy v1 passes have been permanently retired.",
-      };
-    }
-    const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
-    if (cfg.EVENT_ID !== compatEventId) {
-      logRejectedLocked(rawId, "REJECTED_WRONG_EVENT");
-      return {
-        status: "REJECTED_WRONG_EVENT",
-        message: `Legacy v1 passes are only valid for ${compatEventId}.`,
-      };
-    }
-    if (!verifyLegacyV1Signature_(rawId, scannedToken, cfg)) {
-      logRejectedLocked(rawId, "REJECTED_FORGED");
-      return {
-        status: "REJECTED_FORGED",
-        message: "Forged or tampered QR token.",
-      };
-    }
+  const parsed = parseAndVerifyPayload_(payloadStr, cfg);
+  if (!parsed.ok) {
+    logRejectedLocked(parsed.rawId, parsed.status);
+    return { status: parsed.status, message: parsed.message };
   }
+  const { rawId, normId } = parsed;
 
   // O(1) sharded Roster lookup outside ScriptLock
   const rosterLookup = getRosterEntry_(ss, normId);
@@ -1247,14 +1183,7 @@ function recordScanBatch(sessionToken, scans) {
       cfg.LOCKED_STAGE !== "AUTO" &&
       cleanStage !== cfg.LOCKED_STAGE
     ) {
-      const hintParts = payloadStr.trim().split("|");
-      const rawHint = (
-        hintParts[0] === "v2" && hintParts.length >= 3
-          ? hintParts[2]
-          : hintParts[0]
-      )
-        .trim()
-        .toUpperCase();
+      const rawHint = extractPayloadHintId_(payloadStr);
       return {
         clientId,
         cleanStage,
@@ -1280,68 +1209,8 @@ function recordScanBatch(sessionToken, scans) {
       };
     }
 
-    const parts = payloadStr.split("|");
-    let rawId = "";
-    let normId = "";
-    let rejectStatus = "";
-    let rejectMsg = "";
-
-    if (parts[0] === "v2") {
-      if (parts.length !== 4) {
-        rawId = payloadStr.trim().substring(0, 40);
-        rejectStatus = "REJECTED_MALFORMED";
-        rejectMsg = "Malformed v2 QR payload.";
-      } else {
-        const [, evId, sid, hmac] = parts;
-        try {
-          validateV2Field_(evId, "EVENT_ID");
-          validateV2Field_(sid, "STUDENT_ID");
-        } catch (fieldErr) {
-          rawId = payloadStr.trim().substring(0, 40);
-          rejectStatus = "REJECTED_MALFORMED";
-          rejectMsg = fieldErr.message;
-        }
-        if (!rejectStatus && (!hmac || hmac !== hmac.trim())) {
-          rawId = sid;
-          rejectStatus = "REJECTED_MALFORMED";
-          rejectMsg = "Malformed v2 HMAC.";
-        }
-        if (!rejectStatus) {
-          rawId = sid;
-          normId = normalizeId_(rawId);
-          if (evId !== cfg.EVENT_ID) {
-            rejectStatus = "REJECTED_WRONG_EVENT";
-            rejectMsg = `Pass belongs to event "${evId}", not "${cfg.EVENT_ID}".`;
-          } else if (!verifyV2Signature_(evId, sid, hmac, cfg)) {
-            rejectStatus = "REJECTED_FORGED";
-            rejectMsg = "Forged or tampered v2 QR token.";
-          }
-        }
-      }
-    } else {
-      if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
-        rawId = payloadStr.trim().substring(0, 40);
-        rejectStatus = "REJECTED_MALFORMED";
-        rejectMsg = "Malformed QR payload.";
-      } else {
-        rawId = parts[0].trim().toUpperCase();
-        const scannedToken = parts[1].trim().toUpperCase();
-        normId = normalizeId_(rawId);
-        const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
-        if (cfg.V1_COMPAT_RETIRED) {
-          rejectStatus = "REJECTED_V1_RETIRED";
-          rejectMsg = "Legacy v1 passes have been permanently retired.";
-        } else if (cfg.EVENT_ID !== compatEventId) {
-          rejectStatus = "REJECTED_WRONG_EVENT";
-          rejectMsg = `Legacy v1 passes are only valid for ${compatEventId}.`;
-        } else if (!verifyLegacyV1Signature_(rawId, scannedToken, cfg)) {
-          rejectStatus = "REJECTED_FORGED";
-          rejectMsg = "Forged or tampered QR token.";
-        }
-      }
-    }
-
-    if (rejectStatus) {
+    const parsed = parseAndVerifyPayload_(payloadStr, cfg);
+    if (!parsed.ok) {
       return {
         clientId,
         cleanStage,
@@ -1350,22 +1219,23 @@ function recordScanBatch(sessionToken, scans) {
         logRow: [
           scanTime,
           cleanStage,
-          safeCell_(rawId),
+          safeCell_(parsed.rawId),
           "",
           "",
           safeCell_(sess.usherLabel),
-          rejectStatus,
+          parsed.status,
           safeCell_(cfg.EVENT_ID),
         ],
         result: {
           clientId,
-          status: rejectStatus,
-          studentId: rawId,
+          status: parsed.status,
+          studentId: parsed.rawId,
           stage: cleanStage,
-          message: rejectMsg,
+          message: parsed.message,
         },
       };
     }
+    const { rawId, normId } = parsed;
 
     const rosterLookup = getRosterEntry_(ss, normId);
     if (rosterLookup.missingSheet) {
