@@ -1776,7 +1776,7 @@ function resolvePortalUrls_(ss) {
   return {
     portalBase,
     webAppUrl,
-    scannerUrl: `${portalBase}/${apiQuery}`,
+    scannerUrl: `${portalBase}/index.html${apiQuery}`,
     passPortalUrl: `${portalBase}/pass.html${apiQuery}`,
   };
 }
