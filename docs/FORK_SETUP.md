@@ -75,6 +75,8 @@ Set **`WEB_APP_URL`** in your Google Sheet **`Config`** tab to your `/exec` URL 
 ---
 
 ## Optional Security Hardening (Recommended Before Public Event)
-- Open **Extensions → Apps Script**, select **`migrateSecretsToProperties`**, and click **Run** once.
-- Moves `USHER_PIN` and `SECRET_SALT` out of the plaintext `Config` tab into private **`ScriptProperties`** so spreadsheet Viewers/Editors cannot see your secrets.
+All secret management is built directly into **`Attendance Scanner → 🔐 Security & Secrets`** (no Apps Script editor needed):
+- **🔒 Migrate Secrets to Private Storage:** Moves `USHER_PIN` and `SECRET_SALT` out of the plaintext `Config` tab into private **`ScriptProperties`** so spreadsheet Viewers/Editors cannot see your secrets.
+- **🔑 Change Usher PIN:** Updates your 6+ digit `USHER_PIN` safely in `ScriptProperties` (or `Config` if not yet migrated) and immediately invalidates all old usher sessions.
+- **🔄 Rotate Secret Salt (Zero-Downtime):** Auto-generates a fresh 32-character salt and preserves the previous salt in `LEGACY_SECRET_SALT` so existing passes stay valid until you run **🧹 Retire Legacy Secret Salt**.
 - Both `docs/index.html` and `docs/pass.html` enforce a strict Content Security Policy (CSP) and reject any untrusted `?api=` URL not matching `https://script.google.com/macros/s/.../exec`.

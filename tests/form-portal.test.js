@@ -392,6 +392,58 @@ function run() {
     assert.strictEqual(batchOut.ok, true);
   }
 
+  // 9. Security & Secrets submenu actions: onOpen, migrateSecretsMenuAction, changeUsherPinPrompt, rotateSecretSaltPrompt, retireLegacySecretSaltPrompt
+  {
+    const env = makeFixture();
+    const { ctx, sheets, scriptProps } = env;
+
+    // onOpen wires submenu cleanly
+    ctx.onOpen();
+
+    const ui = ctx.SpreadsheetApp.getUi();
+    ui.ButtonSet.OK_CANCEL = 'OK_CANCEL';
+
+    // Migrate secrets to ScriptProperties via menu action
+    const mig = ctx.migrateSecretsMenuAction();
+    assert.strictEqual(mig.ok, true);
+    assert.strictEqual(scriptProps.get('USHER_PIN'), '619482');
+    assert.strictEqual(scriptProps.get('SECRET_SALT'), 'fedcba9876543210fedcba9876543210');
+
+    // Existing session valid before PIN change
+    const beforeSess = ctx.verifyUsherPin('619482', 'Gate A');
+    assert.strictEqual(beforeSess.ok, true);
+
+    // Reject weak PIN (< 6 digits)
+    let promptText = '1234';
+    ui.prompt = () => ({ getSelectedButton: () => ui.Button.OK, getResponseText: () => promptText });
+    const badPin = ctx.changeUsherPinPrompt();
+    assert.strictEqual(badPin.ok, false);
+    assert.strictEqual(scriptProps.get('USHER_PIN'), '619482');
+
+    // Valid new 6-digit PIN updates ScriptProperties (not plaintext Config) and revokes old session
+    promptText = '987654';
+    const okPin = ctx.changeUsherPinPrompt();
+    assert.strictEqual(okPin.ok, true);
+    assert.strictEqual(okPin.storage, 'ScriptProperties');
+    assert.strictEqual(scriptProps.get('USHER_PIN'), '987654');
+    const cfgPinRow = sheets.get('Config')._data.find(r => r[0] === 'USHER_PIN');
+    assert.strictEqual(cfgPinRow[1], '');
+    assert.strictEqual(ctx.getScannerState(beforeSess.sessionToken).status, 'UNAUTHORIZED');
+    assert.strictEqual(ctx.verifyUsherPin('987654', 'Gate A').ok, true);
+
+    // Rotate secret salt with blank prompt -> auto-generates 32-char hex salt, moves old to LEGACY_SECRET_SALT
+    promptText = '';
+    const rot = ctx.rotateSecretSaltPrompt();
+    assert.strictEqual(rot.ok, true);
+    assert.strictEqual(scriptProps.get('LEGACY_SECRET_SALT'), 'fedcba9876543210fedcba9876543210');
+    assert.strictEqual(scriptProps.get('SECRET_SALT').length, 32);
+
+    // Retire legacy secret salt
+    const ret = ctx.retireLegacySecretSaltPrompt();
+    assert.strictEqual(ret.ok, true);
+    assert.strictEqual(scriptProps.get('LEGACY_SECRET_SALT'), undefined);
+  }
+
   console.log('PASS: form-portal.test.js');
 }
 

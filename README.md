@@ -80,8 +80,11 @@ Anyone can deploy this system under their own GitHub account and Google Sheet wi
 
 ## Security, Event Lifecycle & Rollback Notes
 
-- **Secret Migration:** Run `migrateSecretsToProperties()` in Apps Script to move `USHER_PIN`, `SECRET_SALT`, and `V1_COMPAT_EVENT_ID` into private `ScriptProperties` and clear plaintext `Config` cells.
-- **Key Rotation:** `rotateSecretSalt(newSalt)` moves the previous secret into `LEGACY_SECRET_SALT` so existing same-event `v1`/`v2` passes remain valid until `retireLegacySecretSalt()` is called.
+- **Streamlined Secret Management (`Attendance Scanner → 🔐 Security & Secrets`):** Manage all secrets directly from the spreadsheet menu without opening Apps Script Project Settings:
+  - **🔒 Migrate Secrets to Private Storage:** Moves `USHER_PIN`, `SECRET_SALT`, and `V1_COMPAT_EVENT_ID` out of the plaintext `Config` tab into private `ScriptProperties`.
+  - **🔑 Change Usher PIN:** Prompts for a new 6+ digit numeric PIN, updates `ScriptProperties` (or `Config` if not yet migrated) without leaving plaintext in `Config`, and immediately invalidates all previous usher sessions.
+  - **🔄 Rotate Secret Salt (Zero-Downtime):** Auto-generates a fresh 32-character hex salt (or accepts a custom 16+ char salt) and moves the previous salt into `LEGACY_SECRET_SALT` so existing same-event `v1`/`v2` passes remain valid during transition.
+  - **🧹 Retire Legacy Secret Salt:** Removes `LEGACY_SECRET_SALT` once legacy-signed passes are no longer needed.
 - **`DEFAULT` Reservation & 7-Step Transition:** `DEFAULT` is reserved exclusively for legacy `v1` passes. Use `setTargetEventId('CSSO-2026-EVENT')` then `transitionToTargetEvent()` to activate a new event and permanently retire `v1`.
 - **Protocol-Aware Rollback:** Never roll back to pre-`v2` deployment `@5` once `v2` or `V1_COMPAT_RETIRED = TRUE` is active; recover via forward-fix.
 - **Honest Email Semantics (`DISPATCHED`):** When using optional `GmailApp` emails, `DISPATCHED` means `GmailApp.sendEmail()` accepted the request without throwing — not proof of inbox delivery.

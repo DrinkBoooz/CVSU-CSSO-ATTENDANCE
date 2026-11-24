@@ -278,8 +278,18 @@ function verifySessionToken_(sessionToken, cfg) {
  * Adds custom spreadsheet menu on open.
  */
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu("Attendance Scanner")
+  const ui = SpreadsheetApp.getUi();
+  const securityMenu = ui
+    .createMenu("🔐 Security & Secrets")
+    .addItem(
+      "🔒 Migrate Secrets to Private Storage",
+      "migrateSecretsMenuAction",
+    )
+    .addItem("🔑 Change Usher PIN", "changeUsherPinPrompt")
+    .addItem("🔄 Rotate Secret Salt (Zero-Downtime)", "rotateSecretSaltPrompt")
+    .addItem("🧹 Retire Legacy Secret Salt", "retireLegacySecretSaltPrompt");
+
+  ui.createMenu("Attendance Scanner")
     .addItem(
       "🚀 Implement New Features / Apply All Upgrades",
       "applyAllSystemUpgrades",
@@ -312,6 +322,8 @@ function onOpen() {
       "🧹 Clear All Data Rows (Keep Headers & Config)",
       "clearAllDataRows",
     )
+    .addSeparator()
+    .addSubMenu(securityMenu)
     .addToUi();
 }
 
@@ -3345,6 +3357,151 @@ function rotateSecretSalt(newSalt) {
 function retireLegacySecretSalt() {
   PropertiesService.getScriptProperties().deleteProperty("LEGACY_SECRET_SALT");
   return { ok: true };
+}
+
+/**
+ * Menu wrapper for migrateSecretsToProperties() with confirmation and status modal.
+ */
+function migrateSecretsMenuAction() {
+  const ui = SpreadsheetApp.getUi();
+  const confirm = ui.alert(
+    "🔒 Migrate Secrets to Private Storage",
+    "This will copy USHER_PIN and SECRET_SALT into private ScriptProperties and clear their plaintext cells in the Config tab.\n\nYou can still change USHER_PIN or rotate SECRET_SALT anytime from Attendance Scanner → 🔐 Security & Secrets.\n\nProceed?",
+    ui.ButtonSet.YES_NO,
+  );
+  if (confirm !== ui.Button.YES) {
+    return { ok: false, reason: "CANCELLED" };
+  }
+  try {
+    const res = migrateSecretsToProperties();
+    ui.alert(
+      "Secrets Migrated",
+      "USHER_PIN and SECRET_SALT are now stored in private ScriptProperties and cleared from Config.\n\nUse Attendance Scanner → 🔐 Security & Secrets to change the PIN or rotate the salt anytime.",
+      ui.ButtonSet.OK,
+    );
+    return res;
+  } catch (err) {
+    ui.alert(
+      "Migration Failed",
+      err && err.message ? err.message : String(err),
+      ui.ButtonSet.OK,
+    );
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Streamlined UI prompt to change USHER_PIN without opening Apps Script Project Settings.
+ * Updates ScriptProperties if already migrated (never re-exposing plaintext in Config),
+ * or updates Config directly if not yet migrated. Immediately revokes all old usher sessions.
+ */
+function changeUsherPinPrompt() {
+  const ui = SpreadsheetApp.getUi();
+  const prompt = ui.prompt(
+    "🔑 Change Usher PIN",
+    "Enter a new 6+ digit numeric Usher PIN.\n\nNote: Changing the PIN immediately logs out all active usher sessions.",
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (prompt.getSelectedButton() !== ui.Button.OK) {
+    return { ok: false, reason: "CANCELLED" };
+  }
+
+  const newPin = String(prompt.getResponseText() || "").trim();
+  if (!/^\d{6,}$/.test(newPin)) {
+    ui.alert(
+      "Invalid PIN",
+      "USHER_PIN must be at least 6 numeric digits (0-9 only). No changes were made.",
+      ui.ButtonSet.OK,
+    );
+    return { ok: false, reason: "INVALID_PIN" };
+  }
+
+  const props = PropertiesService.getScriptProperties();
+  let storage = "Config";
+  if (props.getProperty("USHER_PIN") || props.getProperty("SECRET_SALT")) {
+    props.setProperty("USHER_PIN", newPin);
+    storage = "ScriptProperties";
+  } else {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const configSheet = ss.getSheetByName("Config");
+    upsertConfigRow_(
+      configSheet,
+      "USHER_PIN",
+      newPin,
+      "6+ digit numeric PIN for ushers",
+    );
+  }
+
+  ui.alert(
+    "Usher PIN Updated",
+    `New Usher PIN saved to ${storage}.\n\nAll previous usher login sessions have been immediately invalidated.`,
+    ui.ButtonSet.OK,
+  );
+  return { ok: true, storage };
+}
+
+/**
+ * Streamlined UI prompt for zero-downtime SECRET_SALT rotation.
+ * Leave blank to auto-generate a strong 32-character hex salt, or enter a custom 16+ char salt.
+ * Preserves the previous salt in LEGACY_SECRET_SALT so existing same-event passes stay valid.
+ */
+function rotateSecretSaltPrompt() {
+  const ui = SpreadsheetApp.getUi();
+  const prompt = ui.prompt(
+    "🔄 Rotate Secret Salt (Zero-Downtime)",
+    "Leave blank to auto-generate a strong 32-character random salt (recommended), or type a custom 16+ character salt.\n\nExisting same-event passes remain valid via LEGACY_SECRET_SALT until you retire it.",
+    ui.ButtonSet.OK_CANCEL,
+  );
+  if (prompt.getSelectedButton() !== ui.Button.OK) {
+    return { ok: false, reason: "CANCELLED" };
+  }
+
+  let newSalt = String(prompt.getResponseText() || "").trim();
+  if (!newSalt) {
+    newSalt = sha256HexPrefix_(
+      `${Utilities.getUuid()}|${Utilities.getUuid()}|${Date.now()}`,
+      32,
+    );
+  }
+
+  try {
+    const res = rotateSecretSalt(newSalt);
+    ui.alert(
+      "Secret Salt Rotated",
+      "New SECRET_SALT is now active in private ScriptProperties.\n\nThe previous salt has been preserved in LEGACY_SECRET_SALT so existing passes keep working until you run '🧹 Retire Legacy Secret Salt'.",
+      ui.ButtonSet.OK,
+    );
+    return res;
+  } catch (err) {
+    ui.alert(
+      "Rotation Blocked",
+      err && err.message ? err.message : String(err),
+      ui.ButtonSet.OK,
+    );
+    return { ok: false, error: String(err) };
+  }
+}
+
+/**
+ * Menu wrapper for retireLegacySecretSalt() with confirmation modal.
+ */
+function retireLegacySecretSaltPrompt() {
+  const ui = SpreadsheetApp.getUi();
+  const confirm = ui.alert(
+    "🧹 Retire Legacy Secret Salt?",
+    "This removes LEGACY_SECRET_SALT so any passes signed only with the previous salt will be rejected.\n\nOnly run this after all participants have new passes or the event has ended. Continue?",
+    ui.ButtonSet.YES_NO,
+  );
+  if (confirm !== ui.Button.YES) {
+    return { ok: false, reason: "CANCELLED" };
+  }
+  const res = retireLegacySecretSalt();
+  ui.alert(
+    "Legacy Secret Salt Retired",
+    "LEGACY_SECRET_SALT has been removed from ScriptProperties.",
+    ui.ButtonSet.OK,
+  );
+  return res;
 }
 
 /**

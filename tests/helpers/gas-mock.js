@@ -169,7 +169,7 @@ function loadCode(opts = {}) {
       return uiConfirmResponse;
     },
     createMenu() {
-      const m = { addItem() { return m; }, addSeparator() { return m; }, addToUi() {} };
+      const m = { addItem() { return m; }, addSeparator() { return m; }, addSubMenu() { return m; }, addToUi() {} };
       return m;
     }
   };
