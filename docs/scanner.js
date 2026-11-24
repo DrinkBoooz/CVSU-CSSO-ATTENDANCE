@@ -1,24 +1,10 @@
-      const DEFAULT_API_URL =
-        (window.CSSO_CONFIG && window.CSSO_CONFIG.DEFAULT_API_URL) ||
-        "https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec";
-      const GAS_EXEC_RE =
-        /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
-      const IS_LOCAL_HOST =
-        window.location.hostname === "127.0.0.1" ||
-        window.location.hostname === "localhost";
-      const LOCAL_API_RE =
-        /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/[A-Za-z0-9_\/-]+$/;
-      const rawApiParam = (
-        new URLSearchParams(window.location.search).get("api") || ""
-      ).trim();
-      const isTrustedApi =
-        GAS_EXEC_RE.test(rawApiParam) ||
-        (IS_LOCAL_HOST && LOCAL_API_RE.test(rawApiParam));
-      const UNTRUSTED_API_WARNING = Boolean(rawApiParam && !isTrustedApi);
-      const API_URL = isTrustedApi ? rawApiParam : DEFAULT_API_URL;
+      const { apiUrl: API_URL, untrustedWarning: UNTRUSTED_API_WARNING } =
+        window.CSSOCommon.resolveApiUrl();
       const SESSION_KEY = "csso_session_token";
       const LOCAL_SEEN_KEY = "csso_local_seen_v1";
       const SCAN_QUEUE_KEY = "csso_scan_queue_v1";
+      const SNAPSHOT_CACHE_KEY = "csso_snapshot_v1";
+      const SNAPSHOT_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
       const STAGE_BITS = { "Check-In": 1, "Mid-Event": 2, "Check-Out": 4 };
       const CAMERA_COOLDOWN_MS = 4000;
       const FETCH_TIMEOUT_MS = 15000;
@@ -132,32 +118,95 @@
         }
       }
 
+      function getSnapshotCacheKey() {
+        try {
+          const hash = btoa(unescape(encodeURIComponent(API_URL)))
+            .replace(/[^A-Za-z0-9]/g, "")
+            .slice(-16);
+          return `${SNAPSHOT_CACHE_KEY}_${hash}`;
+        } catch (e) {
+          return SNAPSHOT_CACHE_KEY;
+        }
+      }
+
+      function saveOfflineSnapshot(snap) {
+        if (!snap || !snap.roster) return;
+        try {
+          localStorage.setItem(
+            getSnapshotCacheKey(),
+            JSON.stringify({
+              eventTitle: snap.eventTitle || "",
+              eventId: snap.eventId || activeEventId,
+              lockedStage: snap.lockedStage || "AUTO",
+              enforceStageOrder: !!snap.enforceStageOrder,
+              requireMidEvent: snap.requireMidEvent !== false,
+              v1Retired: !!snap.v1Retired,
+              v1CompatEventId: snap.v1CompatEventId || "DEFAULT",
+              roster: snap.roster,
+              seen: snap.seen || {},
+              savedAt: Date.now(),
+            }),
+          );
+        } catch (e) {}
+      }
+
+      function loadOfflineSnapshot() {
+        try {
+          const raw = localStorage.getItem(getSnapshotCacheKey());
+          if (!raw) return null;
+          const snap = JSON.parse(raw);
+          if (!snap || !snap.roster) return null;
+          if (snap.savedAt && Date.now() - Number(snap.savedAt) > SNAPSHOT_TTL_MS) {
+            localStorage.removeItem(getSnapshotCacheKey());
+            return null;
+          }
+          return snap;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      function clearOfflineSnapshot() {
+        try {
+          localStorage.removeItem(getSnapshotCacheKey());
+        } catch (e) {}
+      }
+
+      function applySnapshotData(snap) {
+        const prevEventId = activeEventId;
+        snapshotRoster = snap.roster || {};
+        snapshotSeen = snap.seen || {};
+        snapshotEnforceOrder = !!snap.enforceStageOrder;
+        snapshotRequireMidEvent = snap.requireMidEvent !== false;
+        const midPill = document.querySelector('.stage-pill[data-stage="Mid-Event"]');
+        if (midPill) {
+          midPill.textContent = snapshotRequireMidEvent
+            ? "Mid-Event"
+            : "Mid-Event (Optional)";
+        }
+        snapshotV1Retired = !!snap.v1Retired;
+        snapshotV1CompatEventId = snap.v1CompatEventId || "DEFAULT";
+        snapshotLockedStage = snap.lockedStage || "AUTO";
+        activeEventId = snap.eventId || activeEventId;
+        if (activeEventId !== prevEventId) {
+          loadScanQueue();
+        }
+        snapshotReady = true;
+        applyStageLockUI(snapshotLockedStage, activeEventId);
+        updateSyncUI();
+      }
+
       async function loadSnapshot() {
         if (!sessionToken) return;
+        if (!snapshotReady) {
+          const cached = loadOfflineSnapshot();
+          if (cached) applySnapshotData(cached);
+        }
         try {
           const snap = await apiCall({ action: "snapshot", sessionToken });
           if (snap && snap.ok) {
-            const prevEventId = activeEventId;
-            snapshotRoster = snap.roster || {};
-            snapshotSeen = snap.seen || {};
-            snapshotEnforceOrder = !!snap.enforceStageOrder;
-            snapshotRequireMidEvent = snap.requireMidEvent !== false;
-            const midPill = document.querySelector('.stage-pill[data-stage="Mid-Event"]');
-            if (midPill) {
-              midPill.textContent = snapshotRequireMidEvent
-                ? "Mid-Event"
-                : "Mid-Event (Optional)";
-            }
-            snapshotV1Retired = !!snap.v1Retired;
-            snapshotV1CompatEventId = snap.v1CompatEventId || "DEFAULT";
-            snapshotLockedStage = snap.lockedStage || "AUTO";
-            activeEventId = snap.eventId || activeEventId;
-            if (activeEventId !== prevEventId) {
-              loadScanQueue();
-            }
-            snapshotReady = true;
-            applyStageLockUI(snapshotLockedStage, activeEventId);
-            updateSyncUI();
+            applySnapshotData(snap);
+            saveOfflineSnapshot(snap);
           }
         } catch (e) {
           updateSyncUI();
@@ -274,6 +323,22 @@
       });
       window.addEventListener("offline", () => updateSyncUI());
 
+      function checkStageOrderLocal(stage, mask) {
+        if (!snapshotEnforceOrder) return null;
+        if (stage === "Mid-Event" && !(mask & STAGE_BITS["Check-In"])) {
+          return "Must complete Check-In before Mid-Event.";
+        }
+        if (stage === "Check-Out") {
+          if (snapshotRequireMidEvent && !(mask & STAGE_BITS["Mid-Event"])) {
+            return "Must complete Mid-Event before Check-Out.";
+          }
+          if (!snapshotRequireMidEvent && !(mask & STAGE_BITS["Check-In"])) {
+            return "Must complete Check-In before Check-Out.";
+          }
+        }
+        return null;
+      }
+
       function validateScanLocally(payloadText, stage) {
         if (
           snapshotLockedStage &&
@@ -348,36 +413,15 @@
             message: `Already scanned for ${stage}.`,
           };
         }
-        if (snapshotEnforceOrder) {
-          if (stage === "Mid-Event" && !(mask & STAGE_BITS["Check-In"])) {
-            return {
-              ok: false,
-              status: "REJECTED_STAGE_ORDER",
-              studentId,
-              fullName,
-              message: "Must complete Check-In before Mid-Event.",
-            };
-          }
-          if (stage === "Check-Out") {
-            if (snapshotRequireMidEvent && !(mask & STAGE_BITS["Mid-Event"])) {
-              return {
-                ok: false,
-                status: "REJECTED_STAGE_ORDER",
-                studentId,
-                fullName,
-                message: "Must complete Mid-Event before Check-Out.",
-              };
-            }
-            if (!snapshotRequireMidEvent && !(mask & STAGE_BITS["Check-In"])) {
-              return {
-                ok: false,
-                status: "REJECTED_STAGE_ORDER",
-                studentId,
-                fullName,
-                message: "Must complete Check-In before Check-Out.",
-              };
-            }
-          }
+        const orderErr = checkStageOrderLocal(stage, mask);
+        if (orderErr) {
+          return {
+            ok: false,
+            status: "REJECTED_STAGE_ORDER",
+            studentId,
+            fullName,
+            message: orderErr,
+          };
         }
         return { ok: true, normId, studentId, fullName, section, bit };
       }
@@ -549,6 +593,7 @@
           sessionStorage.removeItem(SESSION_KEY);
           sessionStorage.removeItem(LOCAL_SEEN_KEY);
         } catch (e) {}
+        clearOfflineSnapshot();
         document.getElementById("scannerScreen").style.display = "none";
         document.getElementById("pinScreen").style.display = "block";
         document.getElementById("pinInput").value = "";
@@ -640,7 +685,14 @@
             return;
           }
           if (!html5QrCode) {
-            html5QrCode = new Html5Qrcode("reader");
+            const qrOpts = { useBarCodeDetectorIfSupported: true };
+            if (
+              typeof Html5QrcodeSupportedFormats !== "undefined" &&
+              Html5QrcodeSupportedFormats.QR_CODE !== undefined
+            ) {
+              qrOpts.formatsToSupport = [Html5QrcodeSupportedFormats.QR_CODE];
+            }
+            html5QrCode = new Html5Qrcode("reader", qrOpts);
           }
           if (html5QrCode.isScanning) {
             await stopCamera();
@@ -649,7 +701,7 @@
 
           statusEl.textContent = "Starting camera...";
           const scanConfig = {
-            fps: 10,
+            fps: 15,
             qrbox: (vw, vh) => {
               const s = Math.max(
                 140,
@@ -984,36 +1036,15 @@
             });
             return;
           }
-          if (snapshotEnforceOrder) {
-            if (stage === "Mid-Event" && !(mask & STAGE_BITS["Check-In"])) {
-              showResult({
-                status: "REJECTED_STAGE_ORDER",
-                studentId,
-                fullName,
-                message: "Must complete Check-In before Mid-Event.",
-              });
-              return;
-            }
-            if (stage === "Check-Out") {
-              if (snapshotRequireMidEvent && !(mask & STAGE_BITS["Mid-Event"])) {
-                showResult({
-                  status: "REJECTED_STAGE_ORDER",
-                  studentId,
-                  fullName,
-                  message: "Must complete Mid-Event before Check-Out.",
-                });
-                return;
-              }
-              if (!snapshotRequireMidEvent && !(mask & STAGE_BITS["Check-In"])) {
-                showResult({
-                  status: "REJECTED_STAGE_ORDER",
-                  studentId,
-                  fullName,
-                  message: "Must complete Check-In before Check-Out.",
-                });
-                return;
-              }
-            }
+          const manualOrderErr = checkStageOrderLocal(stage, mask);
+          if (manualOrderErr) {
+            showResult({
+              status: "REJECTED_STAGE_ORDER",
+              studentId,
+              fullName,
+              message: manualOrderErr,
+            });
+            return;
           }
           if (verifyFirst) {
             showConfirmCard({
@@ -1212,66 +1243,23 @@
             returnToPinScreen("");
           }
         } catch (e) {
-          returnToPinScreen("");
+          const cached = loadOfflineSnapshot();
+          if (cached) {
+            sessionToken = saved;
+            document.getElementById("pinError").textContent = "";
+            applyScannerState({
+              ok: true,
+              eventTitle: cached.eventTitle || "Event Scanner",
+              eventId: cached.eventId || "DEFAULT",
+              lockedStage: cached.lockedStage || "AUTO",
+            });
+            applySnapshotData(cached);
+          } else {
+            returnToPinScreen("");
+          }
         }
       })();
 
-      // Lightweight :user-invalid <-> aria-invalid sync after interaction
-      (function initFieldValidationAria() {
-        const sync = (el) => {
-          if (!el || !el.matches || !el.matches("input, select, textarea"))
-            return;
-          let bad = false;
-          try {
-            bad = el.matches(":user-invalid");
-          } catch (e) {
-            bad = !el.validity.valid;
-          }
-          el.setAttribute("aria-invalid", bad ? "true" : "false");
-          const errId = el.dataset.error;
-          if (errId) {
-            const hintId = el.id === "pinInput" ? "pin-hint" : "";
-            const ids = [];
-            if (hintId) ids.push(hintId);
-            if (bad) ids.push(errId);
-            if (ids.length) el.setAttribute("aria-describedby", ids.join(" "));
-          }
-        };
-        document.addEventListener("blur", (e) => sync(e.target), true);
-        document.addEventListener("input", (e) => {
-          if (e.target && e.target.getAttribute("aria-invalid") === "true")
-            sync(e.target);
-        });
-        document.addEventListener("invalid", (e) => sync(e.target), true);
-      })();
-    
-// CSP-safe declarative handler binding (replaces inline on* attributes; no eval).
-(function bindDeclarativeHandlers() {
-  function parseCall(spec) {
-    const m = /^\s*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*;?\s*$/.exec(spec || "");
-    if (!m) return null;
-    const args = m[2].trim()
-      ? m[2].split(",").map((a) => {
-          const t = a.trim();
-          if (t === "event") return { ev: true };
-          if (t === "true") return { v: true };
-          if (t === "false") return { v: false };
-          const s = /^'([^']*)'$/.exec(t) || /^"([^"]*)"$/.exec(t);
-          return { v: s ? s[1] : t };
-        })
-      : [];
-    return { fn: m[1], args };
-  }
-  ["click", "submit", "change"].forEach((evName) => {
-    document.querySelectorAll("[data-on-" + evName + "]").forEach((el) => {
-      const call = parseCall(el.getAttribute("data-on-" + evName));
-      if (!call) return;
-      el.addEventListener(evName, (ev) => {
-        const fn = window[call.fn];
-        if (typeof fn === "function") {
-          fn.apply(null, call.args.map((a) => (a.ev ? ev : a.v)));
-        }
-      });
-    });
-  });
-})();
+      window.CSSOCommon.initFieldValidationAria({ pinInput: "pin-hint" });
+      window.CSSOCommon.bindDeclarativeHandlers();
+      window.CSSOCommon.registerServiceWorker();

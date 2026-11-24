@@ -1,14 +1,5 @@
-  const DEFAULT_API_URL =
-    (window.CSSO_CONFIG && window.CSSO_CONFIG.DEFAULT_API_URL) ||
-    'https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec';
-  const GAS_EXEC_RE = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
-  const IS_LOCAL_HOST =
-    window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
-  const LOCAL_API_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/[A-Za-z0-9_\/-]+$/;
-  const rawApiParam = (new URLSearchParams(window.location.search).get('api') || '').trim();
-  const isTrustedApi = GAS_EXEC_RE.test(rawApiParam) || (IS_LOCAL_HOST && LOCAL_API_RE.test(rawApiParam));
-  const API_URL = isTrustedApi ? rawApiParam : DEFAULT_API_URL;
-  if (rawApiParam && !isTrustedApi) {
+  const { apiUrl: API_URL, untrustedWarning } = window.CSSOCommon.resolveApiUrl();
+  if (untrustedWarning) {
     document.getElementById('errorText').textContent = 'Ignored untrusted ?api= URL; using default official endpoint.';
   }
   const FETCH_TIMEOUT_MS = 15000;
@@ -17,14 +8,7 @@
   let currentPass = null;
 
   function getSavedPassKey() {
-    try {
-      const hash = btoa(unescape(encodeURIComponent(API_URL)))
-        .replace(/[^A-Za-z0-9]/g, '')
-        .slice(-16);
-      return `${SAVED_PASS_KEY}_${hash}`;
-    } catch (e) {
-      return SAVED_PASS_KEY;
-    }
+    return window.CSSOCommon.scopedKey(SAVED_PASS_KEY, API_URL);
   }
 
   function renderPassCard(res) {
@@ -221,58 +205,9 @@
     document.getElementById('errorText').textContent = '';
   }
 
-  // Lightweight :user-invalid <-> aria-invalid sync after interaction
-  (function initFieldValidationAria() {
-    const sync = (el) => {
-      if (!el || !el.matches || !el.matches('input, select, textarea')) return;
-      let bad = false;
-      try { bad = el.matches(':user-invalid'); } catch (e) { bad = !el.validity.valid; }
-      el.setAttribute('aria-invalid', bad ? 'true' : 'false');
-      const hintMap = { studentIdInput: 'id-hint', emailInput: 'email-hint', pinInput: 'pin-hint' };
-      const hintId = hintMap[el.id] || '';
-      const errId = el.dataset.error;
-      const ids = [];
-      if (hintId) ids.push(hintId);
-      if (bad && errId) ids.push(errId);
-      if (ids.length) el.setAttribute('aria-describedby', ids.join(' '));
-    };
-    document.addEventListener('blur', (e) => {
-      if (e.target && (e.target.id === 'studentIdInput' || e.target.id === 'pinInput') && typeof e.target.value === 'string') {
-        e.target.value = e.target.value.trim();
-      }
-      sync(e.target);
-    }, true);
-    document.addEventListener('input', (e) => { if (e.target && e.target.getAttribute('aria-invalid') === 'true') sync(e.target); });
-    document.addEventListener('invalid', (e) => sync(e.target), true);
-  })();
-
-// CSP-safe declarative handler binding (replaces inline on* attributes; no eval).
-(function bindDeclarativeHandlers() {
-  function parseCall(spec) {
-    const m = /^\s*([A-Za-z_$][\w$]*)\s*\(([^)]*)\)\s*;?\s*$/.exec(spec || "");
-    if (!m) return null;
-    const args = m[2].trim()
-      ? m[2].split(",").map((a) => {
-          const t = a.trim();
-          if (t === "event") return { ev: true };
-          if (t === "true") return { v: true };
-          if (t === "false") return { v: false };
-          const s = /^'([^']*)'$/.exec(t) || /^"([^"]*)"$/.exec(t);
-          return { v: s ? s[1] : t };
-        })
-      : [];
-    return { fn: m[1], args };
-  }
-  ["click", "submit", "change"].forEach((evName) => {
-    document.querySelectorAll("[data-on-" + evName + "]").forEach((el) => {
-      const call = parseCall(el.getAttribute("data-on-" + evName));
-      if (!call) return;
-      el.addEventListener(evName, (ev) => {
-        const fn = window[call.fn];
-        if (typeof fn === "function") {
-          fn.apply(null, call.args.map((a) => (a.ev ? ev : a.v)));
-        }
-      });
-    });
-  });
-})();
+  window.CSSOCommon.initFieldValidationAria(
+    { studentIdInput: 'id-hint', emailInput: 'email-hint', pinInput: 'pin-hint' },
+    ['studentIdInput', 'pinInput']
+  );
+  window.CSSOCommon.bindDeclarativeHandlers();
+  window.CSSOCommon.registerServiceWorker();

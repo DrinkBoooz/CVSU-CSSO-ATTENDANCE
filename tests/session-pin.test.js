@@ -91,6 +91,34 @@ function run() {
     assert.strictEqual(sleeps.length, 20);
   }
 
+  // 4. Non-secret Config caching (when secrets migrated): never caches secrets, invalidates on Config edit
+  {
+    const { ctx, sheets, cache } = loadCode({
+      scriptProperties: { USHER_PIN: '742915', SECRET_SALT: salt },
+      sheets: {
+        Config: [
+          ['Key', 'Value'],
+          ['EVENT_TITLE', 'Cached Event'],
+          ['EVENT_ID', '02-2027-CSSO-GA'],
+          ['LOCKED_STAGE', 'AUTO']
+        ]
+      }
+    });
+    const c1 = ctx.getConfig_();
+    assert.strictEqual(c1.EVENT_ID, '02-2027-CSSO-GA');
+    assert.strictEqual(c1.USHER_PIN, '742915');
+    const cachedRaw = cache.get('config_public_v1');
+    assert.ok(cachedRaw, 'public Config should be cached when secrets are migrated');
+    assert.strictEqual(cachedRaw.includes('742915'), false, 'USHER_PIN must never be cached');
+    assert.strictEqual(cachedRaw.includes(salt), false, 'SECRET_SALT must never be cached');
+
+    // Direct sheet edit + onSheetEdit invalidates Config cache immediately
+    sheets.get('Config')._data[3][1] = 'Check-In';
+    ctx.onSheetEdit({ range: { getSheet: () => sheets.get('Config'), getRow: () => 4 } });
+    assert.strictEqual(cache.get('config_public_v1'), null);
+    assert.strictEqual(ctx.getConfig_().LOCKED_STAGE, 'Check-In');
+  }
+
   console.log('PASS: session-pin.test.js');
 }
 
