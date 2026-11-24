@@ -2851,7 +2851,21 @@ function applyAllSystemUpgrades() {
   runStep("Security Audit", () => {
     const cfg = getConfig_();
     requireSecureConfig_(cfg);
-    return `PIN & Salt valid (EVENT_ID=${cfg.EVENT_ID}, LOCKED_STAGE=${cfg.LOCKED_STAGE})`;
+    const advisories = [];
+    if (cfg.EVENT_ID === "DEFAULT") {
+      advisories.push(
+        "still on legacy v1 EVENT_ID=DEFAULT; set a dedicated EVENT_ID for v2 event-bound passes",
+      );
+    }
+    if (String(cfg.USHER_PIN).length < 8) {
+      advisories.push(
+        "USHER_PIN is under 8 digits; use Security & Secrets > Change Usher PIN (blank = auto 8-digit)",
+      );
+    }
+    return (
+      `PIN & Salt valid (EVENT_ID=${cfg.EVENT_ID}, LOCKED_STAGE=${cfg.LOCKED_STAGE})` +
+      (advisories.length ? ` | ADVISORY: ${advisories.join("; ")}` : "")
+    );
   });
 
   SpreadsheetApp.getUi().alert(
@@ -3447,14 +3461,19 @@ function changeUsherPinPrompt() {
   const ui = SpreadsheetApp.getUi();
   const prompt = ui.prompt(
     "🔑 Change Usher PIN",
-    "Enter a new 6+ digit numeric Usher PIN.\n\nNote: Changing the PIN immediately logs out all active usher sessions.",
+    "Leave blank to auto-generate a random 8-digit PIN (recommended), or enter your own 6+ digit numeric PIN (8+ digits recommended).\n\nNote: Changing the PIN immediately logs out all active usher sessions.",
     ui.ButtonSet.OK_CANCEL,
   );
   if (prompt.getSelectedButton() !== ui.Button.OK) {
     return { ok: false, reason: "CANCELLED" };
   }
 
-  const newPin = String(prompt.getResponseText() || "").trim();
+  let newPin = String(prompt.getResponseText() || "").trim();
+  let generated = false;
+  if (!newPin) {
+    newPin = generateRandomPin_(8);
+    generated = true;
+  }
   if (!/^\d{6,}$/.test(newPin)) {
     ui.alert(
       "Invalid PIN",
@@ -3482,10 +3501,29 @@ function changeUsherPinPrompt() {
 
   ui.alert(
     "Usher PIN Updated",
-    `New Usher PIN saved to ${storage}.\n\nAll previous usher login sessions have been immediately invalidated.`,
+    `New Usher PIN saved to ${storage}.` +
+      (generated
+        ? `\n\nGenerated PIN (shown once, share only with ushers): ${newPin}`
+        : "") +
+      `\n\nAll previous usher login sessions have been immediately invalidated.`,
     ui.ButtonSet.OK,
   );
-  return { ok: true, storage };
+  return { ok: true, storage, generated };
+}
+
+/**
+ * Generates a random numeric PIN of the given length from UUID-derived entropy.
+ */
+function generateRandomPin_(length) {
+  let digits = "";
+  while (digits.length < length) {
+    const hex = sha256HexPrefix_(
+      `${Utilities.getUuid()}|${Utilities.getUuid()}|${Date.now()}|${digits.length}`,
+      12,
+    );
+    digits += String(parseInt(hex, 16));
+  }
+  return digits.substring(digits.length - length);
 }
 
 /**

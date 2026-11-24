@@ -482,6 +482,28 @@ function run() {
     assert.strictEqual(cfgMap().get('PASS_PORTAL_URL'), 'https://customorg.github.io/events/pass.html');
   }
 
+  // 11. changeUsherPinPrompt: blank input auto-generates a random 8-digit PIN that works for login
+  {
+    const env = makeFixture();
+    const { ctx, sheets } = env;
+    const ui = ctx.SpreadsheetApp.getUi();
+    ui.ButtonSet.OK_CANCEL = 'OK_CANCEL';
+    ui.prompt = () => ({ getSelectedButton: () => ui.Button.OK, getResponseText: () => '' });
+
+    const res = ctx.changeUsherPinPrompt();
+    assert.strictEqual(res.ok, true);
+    assert.strictEqual(res.generated, true);
+    const pinRow = sheets.get('Config')._data.find(r => r[0] === 'USHER_PIN');
+    assert.ok(/^\d{8}$/.test(String(pinRow[1])), 'auto PIN must be 8 digits, got ' + pinRow[1]);
+    assert.strictEqual(ctx.verifyUsherPin(String(pinRow[1]), 'Gate Z').ok, true);
+
+    // Custom valid PIN is not flagged as generated
+    ui.prompt = () => ({ getSelectedButton: () => ui.Button.OK, getResponseText: () => '12345678' });
+    const custom = ctx.changeUsherPinPrompt();
+    assert.strictEqual(custom.ok, true);
+    assert.strictEqual(custom.generated, false);
+  }
+
   console.log('PASS: form-portal.test.js');
 }
 

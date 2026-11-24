@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -16,17 +16,9 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      - name: Syntax check Apps Script files
-        run: |
-          node -c Code.js
-          node -c QrEncoder.js
-      - name: Run all unit & integration tests
-        run: |
-          for f in tests/*.js; do
-            echo "Running $f"
-            node "$f"
-          done
-      - name: Install Playwright Chromium & run browser tests
-        run: |
-          npx playwright install --with-deps chromium
-          node tests/browser/scanner.spec.js
+      - name: Dependency vulnerability audit
+        run: npm audit --audit-level=high
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Syntax checks, unit tests and browser tests (single source of truth)
+        run: npm test

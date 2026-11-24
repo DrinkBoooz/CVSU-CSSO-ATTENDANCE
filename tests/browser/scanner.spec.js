@@ -212,6 +212,15 @@ async function run() {
     const page = await context.newPage();
 
     const externalRequests = [];
+    const runtimeProblems = [];
+    page.on("pageerror", (err) =>
+      runtimeProblems.push("pageerror: " + err.message),
+    );
+    page.on("console", (msg) => {
+      if (msg.type() === "error" && /Content Security Policy|Refused to/i.test(msg.text())) {
+        runtimeProblems.push("csp: " + msg.text());
+      }
+    });
     page.on("request", (req) => {
       const u = req.url();
       if (!u.startsWith(`http://127.0.0.1:${port}`)) externalRequests.push(u);
@@ -308,6 +317,11 @@ async function run() {
     await page.click("#manualSubmit");
     await page.waitForSelector("#pinScreen", { state: "visible" });
 
+    assert.deepStrictEqual(
+      runtimeProblems,
+      [],
+      "CSP/page errors: " + runtimeProblems.join(" | "),
+    );
     console.log("PASS: tests/browser/scanner.spec.js");
   } finally {
     if (browser) await browser.close();
