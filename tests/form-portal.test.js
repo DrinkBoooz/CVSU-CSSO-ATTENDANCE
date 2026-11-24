@@ -8,6 +8,7 @@ function attachFormMock(env, opts = {}) {
   const publishedUrl = opts.publishedUrl || `https://docs.google.com/forms/d/e/${formId}/viewform`;
   const editUrl = opts.editUrl || `https://docs.google.com/forms/d/${formId}/edit`;
   const textItems = [];
+  const listItems = [];
 
   const makeTextItem = (title = '') => {
     let itemTitle = title;
@@ -18,6 +19,21 @@ function attachFormMock(env, opts = {}) {
       setHelpText() { return item; },
       setRequired() { return item; },
       setValidation() { return item; }
+    };
+    return item;
+  };
+
+  const makeListItem = (title = '') => {
+    let itemTitle = title;
+    let choiceValues = [];
+    const item = {
+      getTitle: () => itemTitle,
+      setTitle(t) { itemTitle = t; return item; },
+      asListItem() { return item; },
+      setHelpText() { return item; },
+      setRequired() { return item; },
+      setChoiceValues(vals) { choiceValues = [...vals]; return item; },
+      getChoiceValues: () => [...choiceValues]
     };
     return item;
   };
@@ -33,11 +49,22 @@ function attachFormMock(env, opts = {}) {
     setAllowResponseEdits() { return mockForm; },
     setRequireLogin() { return mockForm; },
     setConfirmationMessage(msg) { confirmationMessage = String(msg || ''); return mockForm; },
-    getItems: () => textItems,
+    getItems: (type) => (type === 'LIST' ? listItems : textItems),
     addTextItem() {
       const it = makeTextItem();
       textItems.push(it);
       return it;
+    },
+    addListItem() {
+      const it = makeListItem();
+      listItems.push(it);
+      return it;
+    },
+    deleteItem(item) {
+      const ti = textItems.indexOf(item);
+      if (ti >= 0) textItems.splice(ti, 1);
+      const li = listItems.indexOf(item);
+      if (li >= 0) listItems.splice(li, 1);
     },
     setDestination() {},
     getPublishedUrl: () => publishedUrl,
@@ -45,7 +72,7 @@ function attachFormMock(env, opts = {}) {
   };
 
   env.ctx.FormApp = {
-    ItemType: { TEXT: 'TEXT' },
+    ItemType: { TEXT: 'TEXT', LIST: 'LIST' },
     DestinationType: { SPREADSHEET: 'SPREADSHEET' },
     createTextValidation() {
       const v = {
@@ -85,7 +112,9 @@ function attachFormMock(env, opts = {}) {
     formId,
     publishedUrl,
     editUrl,
-    getConfirmationMessage: () => confirmationMessage
+    getConfirmationMessage: () => confirmationMessage,
+    getListItems: () => listItems,
+    getTextItems: () => textItems
   };
 }
 
@@ -523,6 +552,55 @@ function run() {
     assert.ok(evRow[2].includes('02-2027-CSSO-GA'));
     assert.strictEqual(lsRow[1], 'AUTO');
     assert.ok(lsRow[2].includes('AUTO (default)'));
+  }
+
+  // 13. List tab creates modifiable Form dropdowns (Course/Year/Section), live-syncs on edit, and combines into Roster Col D
+  {
+    const env = makeFixture();
+    const { ctx, sheets } = env;
+    const formInfo = attachFormMock(env);
+
+    // applyAllSystemUpgrades creates the List tab with defaults
+    ctx.applyAllSystemUpgrades();
+    const listSheet = sheets.get('List');
+    assert.ok(listSheet, 'List sheet must be created by applyAllSystemUpgrades');
+    assert.deepStrictEqual(listSheet._data[0].slice(0, 3), ['Course / Program', 'Year Level', 'Section']);
+    assert.strictEqual(listSheet._data[1][0], 'BSCS');
+
+    // Setup Form populates all 3 dropdowns from List
+    const setupRes = ctx.setupRegistrationFormAndTrigger();
+    assert.strictEqual(setupRes.ok, true);
+    const courseItem = formInfo.getListItems().find(i => i.getTitle() === 'Course / Program');
+    const yearItem = formInfo.getListItems().find(i => i.getTitle() === 'Year Level');
+    const secItem = formInfo.getListItems().find(i => i.getTitle() === 'Section');
+    assert.ok(courseItem && courseItem.getChoiceValues().includes('BSCS'));
+    assert.ok(yearItem && yearItem.getChoiceValues().includes('4'));
+    assert.ok(secItem && secItem.getChoiceValues().includes('3'));
+    assert.strictEqual(formInfo.getTextItems().some(i => i.getTitle() === 'Section'), false);
+
+    // Admin customizes List tab -> onSheetEdit live-syncs new choices to the Form without overwriting List on upgrades
+    listSheet._data.push(['BSDS', '', '9']);
+    ctx.onSheetEdit({ range: { getSheet: () => listSheet, getRow: () => listSheet._data.length } });
+    assert.ok(courseItem.getChoiceValues().includes('BSDS'));
+    assert.ok(secItem.getChoiceValues().includes('9'));
+    ctx.applyAllSystemUpgrades();
+    assert.ok(listSheet._data.some(r => r[0] === 'BSDS'), 'applyAllSystemUpgrades must preserve custom List entries');
+
+    // Form submit with 3 dropdowns combines into "BSCS 4-3" in Roster Col D
+    ctx.onRegistrationFormSubmit({
+      namedValues: {
+        'Student ID': ['202310088'],
+        'Email Address': ['dropdown@cvsu.edu.ph'],
+        'Full Name': ['Dropdown Student'],
+        'Course / Program': ['BSCS'],
+        'Year Level': ['4'],
+        'Section': ['3'],
+        'Personal Pass PIN': ['5511']
+      }
+    });
+    const added = sheets.get('Roster')._data.find(r => r[0] === '202310088');
+    assert.ok(added, 'Dropdown student must be appended to Roster');
+    assert.strictEqual(added[3], 'BSCS 4-3');
   }
 
   console.log('PASS: form-portal.test.js');
