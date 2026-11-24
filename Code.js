@@ -318,6 +318,11 @@ function onOpen() {
       "issueTargetEventV2Passes",
     )
     .addItem("Rebuild Verified Attendance", "rebuildVerifiedAttendance")
+    .addItem(
+      "📊 Split Verified Attendance by Section",
+      "splitVerifiedAttendanceBySection",
+    )
+    .addItem("🧹 Remove Per-Section Tabs", "removeSectionTabs")
     .addSeparator()
     .addItem(
       "📝 Setup Registration Form & Portal Sync",
@@ -1976,6 +1981,7 @@ function replaceRegistrationForm() {
     "Roster",
     "Attendance Log",
     "Verified Attendance",
+    "Section Summary",
   ]);
   const tabsToDelete = [];
   const sheetsBefore = ss.getSheets();
@@ -2789,8 +2795,23 @@ function rebuildVerifiedAttendance_() {
   }
 
   const outRows = [];
+  const cmpNat = (a, b) =>
+    String(a || "").localeCompare(String(b || ""), undefined, {
+      numeric: true,
+      sensitivity: "base",
+    });
   Object.keys(summary)
-    .sort()
+    .sort((ka, kb) => {
+      const ia = summary[ka];
+      const ib = summary[kb];
+      const sa = ia.section || "\uffff";
+      const sb = ib.section || "\uffff";
+      const sc = cmpNat(sa, sb);
+      if (sc !== 0) return sc;
+      const nc = cmpNat(ia.fullName, ib.fullName);
+      if (nc !== 0) return nc;
+      return cmpNat(ia.studentId, ib.studentId);
+    })
     .forEach((k) => {
       const item = summary[k];
       const ci = item.stages["Check-In"] || "—";
@@ -2843,6 +2864,9 @@ function applyAllSystemUpgrades() {
 
   runStep("Config Keys & Validation", () => ensureConfigKeys_(ss));
   runStep("List Tab (Form Dropdown Options)", () => ensureListSheet_(ss));
+  runStep("Section Summary Tab (Native Formulas)", () =>
+    ensureSectionSummarySheet_(ss),
+  );
   runStep("Portal Links in Config", () => syncPortalLinksToConfig_(ss));
   runStep("Registration Form Config Links", () =>
     syncRegistrationFormConfigLinks_(ss),
@@ -3075,6 +3099,200 @@ function syncFormDropdownsFromList_(ss) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Ensures the native-formula `Section Summary` tab exists with:
+ * - Cols A-E: Per-section rollup (bounded COUNTIF/COUNTIFS over Verified Attendance 2:5000)
+ * - Cols G-N: 1-click Section Viewer filtered by dropdown in H1
+ * Preserves the user's selected H1 filter across upgrades.
+ */
+function ensureSectionSummarySheet_(ss) {
+  let sheet = ss.getSheetByName("Section Summary");
+  const created = !sheet;
+  if (!sheet) {
+    sheet = ss.insertSheet("Section Summary");
+  }
+
+  sheet
+    .getRange(1, 1, 1, 5)
+    .setValues([["Section", "Total Registered", "Qualified", "Incomplete", "Rate %"]]);
+  sheet
+    .getRange(2, 1)
+    .setValue(
+      "=IFERROR(SORT(UNIQUE(FILTER('Verified Attendance'!C2:C5000,'Verified Attendance'!C2:C5000<>\"\"))),\"\")",
+    );
+
+  const summaryRows = [];
+  for (let r = 2; r <= 100; r++) {
+    summaryRows.push([
+      `=IF(A${r}="","",COUNTIF('Verified Attendance'!$C$2:$C$5000,A${r}))`,
+      `=IF(A${r}="","",COUNTIFS('Verified Attendance'!$C$2:$C$5000,A${r},'Verified Attendance'!$G$2:$G$5000,"QUALIFIED"))`,
+      `=IF(A${r}="","",COUNTIFS('Verified Attendance'!$C$2:$C$5000,A${r},'Verified Attendance'!$G$2:$G$5000,"INCOMPLETE"))`,
+      `=IF(OR(A${r}="",B${r}=0),"",C${r}/B${r})`,
+    ]);
+  }
+  sheet.getRange(2, 2, summaryRows.length, 4).setValues(summaryRows);
+  sheet.getRange(2, 5, summaryRows.length, 1).setNumberFormat("0.0%");
+
+  // 1-Click Section Viewer (Cols G-N)
+  sheet.getRange(1, 7).setValue("Filter Section:");
+  const rule = SpreadsheetApp.newDataValidation()
+    .requireValueInRange(sheet.getRange(2, 1, 99, 1), true)
+    .setAllowInvalid(true)
+    .build();
+  sheet.getRange(1, 8).setDataValidation(rule);
+  sheet
+    .getRange(2, 7, 1, 8)
+    .setValues([[
+      "Student ID",
+      "Full Name",
+      "Section",
+      "Check-In",
+      "Mid-Event",
+      "Check-Out",
+      "Qualification",
+      "Stage Count",
+    ]]);
+  sheet
+    .getRange(3, 7)
+    .setValue(
+      "=IF(H1=\"\",\"\",IFERROR(FILTER('Verified Attendance'!A2:H5000,'Verified Attendance'!C2:C5000=H1),\"No records for section\"))",
+    );
+
+  return created
+    ? "Created Section Summary tab with bounded formulas & Filter dropdown"
+    : "Updated Section Summary formulas (preserved H1 filter)";
+}
+
+function sanitizeSectionTabName_(section) {
+  const clean = String(section || "")
+    .replace(/[\[\]:*?/\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const base = clean || "Unassigned";
+  return `Sec - ${base}`.substring(0, 90);
+}
+
+/**
+ * Post-event on-demand action: rebuilds Verified Attendance, then creates/updates
+ * one dedicated `Sec - <Section>` tab per section (sorted by Section -> Full Name).
+ */
+function splitVerifiedAttendanceBySection() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    ui.alert(
+      "Busy",
+      "Another scan or rebuild is in progress. Please try again in a moment.",
+      ui.ButtonSet.OK,
+    );
+    return { ok: false, reason: "LOCKED" };
+  }
+
+  try {
+    rebuildVerifiedAttendance_();
+    const verSheet = ss.getSheetByName("Verified Attendance");
+    if (!verSheet || verSheet.getLastRow() <= 1) {
+      ui.alert(
+        "No Attendance Rows",
+        "Verified Attendance has no student rows to split yet.",
+        ui.ButtonSet.OK,
+      );
+      return { ok: true, sections: 0, tabs: [] };
+    }
+
+    const headers = [
+      "Student ID",
+      "Full Name",
+      "Section",
+      "Check-In",
+      "Mid-Event",
+      "Check-Out",
+      "Qualification",
+      "Stage Count",
+    ];
+    const rows = verSheet
+      .getRange(2, 1, verSheet.getLastRow() - 1, 8)
+      .getValues();
+    const groups = {};
+    const order = [];
+    for (let i = 0; i < rows.length; i++) {
+      const sid = String(rows[i][0] || "").trim();
+      if (!sid) continue;
+      const tabName = sanitizeSectionTabName_(rows[i][2]);
+      if (!groups[tabName]) {
+        groups[tabName] = [];
+        order.push(tabName);
+      }
+      groups[tabName].push(rows[i]);
+    }
+
+    order.forEach((tabName) => {
+      let tab = ss.getSheetByName(tabName);
+      if (!tab) tab = ss.insertSheet(tabName);
+      const existingLast = tab.getLastRow();
+      if (existingLast > 1) {
+        tab.getRange(2, 1, existingLast - 1, 8).clearContent();
+      }
+      tab.getRange(1, 1, 1, 8).setValues([headers]);
+      const data = groups[tabName];
+      if (data.length > 0) {
+        tab.getRange(2, 1, data.length, 8).setValues(data);
+      }
+      tab.getRange(2, 1, Math.max(1, tab.getMaxRows() - 1), 1).setNumberFormat("@");
+    });
+
+    ui.alert(
+      "Section Tabs Updated",
+      `Created/updated ${order.length} per-section tab(s):\n\n• ${order.join("\n• ")}`,
+      ui.ButtonSet.OK,
+    );
+    return { ok: true, sections: order.length, tabs: order };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Removes all generated `Sec - *` per-section tabs cleanly (never touches core or Form tabs).
+ */
+function removeSectionTabs() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const targets = ss
+    .getSheets()
+    .filter((s) => String(s.getName() || "").startsWith("Sec - "));
+  if (targets.length === 0) {
+    ui.alert(
+      "No Per-Section Tabs",
+      "There are no 'Sec - *' tabs to remove.",
+      ui.ButtonSet.OK,
+    );
+    return { ok: true, removed: 0 };
+  }
+  const confirm = ui.alert(
+    "Remove Per-Section Tabs?",
+    `This will delete ${targets.length} generated per-section tab(s) (keeping Verified Attendance, Section Summary, Roster, Attendance Log, List, and Config).\n\nContinue?`,
+    ui.ButtonSet.YES_NO,
+  );
+  if (confirm !== ui.Button.YES) {
+    return { ok: false, reason: "CANCELLED", removed: 0 };
+  }
+  let removed = 0;
+  targets.forEach((s) => {
+    if (ss.getSheets().length > 1) {
+      ss.deleteSheet(s);
+      removed++;
+    }
+  });
+  ui.alert(
+    "Per-Section Tabs Removed",
+    `Removed ${removed} per-section tab(s).`,
+    ui.ButtonSet.OK,
+  );
+  return { ok: true, removed };
 }
 
 function ensureConfigKeys_(ss) {

@@ -176,10 +176,14 @@ function loadCode(opts = {}) {
 
   const ss = {
     getSheetByName(name) { return sheets.get(name) || null; },
+    getSheets() { return Array.from(sheets.values()); },
     insertSheet(name) {
       const s = new MockSheet(name, []);
       sheets.set(name, s);
       return s;
+    },
+    deleteSheet(sheet) {
+      if (sheet && sheet.getName) sheets.delete(sheet.getName());
     },
     getActiveSheet() { return sheets.get(activeSheetName) || null; },
     setActiveSheetByName(name) { activeSheetName = name; },
@@ -376,7 +380,7 @@ function loadCode(opts = {}) {
     getActiveSpreadsheet: () => ss,
     getUi: () => mockUi,
     newDataValidation: () => {
-      const b = { requireValueInList() { return b; }, setAllowInvalid() { return b; }, build() { return { type: 'list' }; } };
+      const b = { requireValueInList() { return b; }, requireValueInRange() { return b; }, setAllowInvalid() { return b; }, build() { return { type: 'list' }; } };
       return b;
     },
     newConditionalFormatRule: () => {
