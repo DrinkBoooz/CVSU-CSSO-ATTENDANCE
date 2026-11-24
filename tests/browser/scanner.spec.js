@@ -57,14 +57,26 @@ function startTestServer() {
             res.end(JSON.stringify({ status: 'UNAUTHORIZED', message: 'Session expired.' }));
             return;
           }
-          if (body.payload === 'VALID_PASS') {
+          if (body.payload === 'v2|CSSO-2026|202310001|VALID') {
             res.end(JSON.stringify({ status: 'OK', fullName: 'Juan Dela Cruz', studentId: '202310001', section: 'BSCS 4-2', stage: body.stage, time: '10:00:00' }));
-          } else if (body.payload === 'WRONG_EVT') {
+          } else if (body.payload === 'v2|OTHER|202310001|WRONG') {
             res.end(JSON.stringify({ status: 'REJECTED_WRONG_EVENT', message: 'Pass belongs to another event.' }));
-          } else if (body.payload === 'V1_RET') {
+          } else if (body.payload === 'v2|CSSO-2026|202310001|V1_RET') {
             res.end(JSON.stringify({ status: 'REJECTED_V1_RETIRED', message: 'Legacy pass retired.' }));
           } else {
             res.end(JSON.stringify({ status: 'REJECTED_FORGED', message: 'Forged token.' }));
+          }
+          return;
+        }
+        if (body.action === 'manualScan') {
+          if (forceUnauthorized || body.sessionToken !== 'tok.123') {
+            res.end(JSON.stringify({ status: 'UNAUTHORIZED', message: 'Session expired.' }));
+            return;
+          }
+          if (body.studentId === '202310001') {
+            res.end(JSON.stringify({ status: 'OK', manual: true, fullName: 'Juan Dela Cruz', studentId: '202310001', section: 'BSCS 4-2', stage: body.stage, time: '10:00:00' }));
+          } else {
+            res.end(JSON.stringify({ status: 'REJECTED_NOT_IN_ROSTER', message: 'Student ID not found in Roster.' }));
           }
           return;
         }
@@ -140,26 +152,35 @@ async function run() {
     await page.reload({ waitUntil: 'networkidle' });
     await page.waitForSelector('#scannerScreen', { state: 'visible' });
 
-    // 5. Manual scans: OK, WRONG_EVENT, V1_RETIRED
-    await page.fill('#manualInput', 'VALID_PASS');
+    // 5. 2-step Confirm Card (Cancel then Confirm on Manual ID), plus WRONG_EVENT and V1_RETIRED
+    await page.fill('#manualInput', '202310001');
     await page.click('#manualSubmit');
+    await page.waitForSelector('#confirmCard', { state: 'visible' });
+    await page.click('#confirmNoBtn');
+    await page.waitForSelector('#confirmCard', { state: 'hidden' });
+    assert.strictEqual(await page.textContent('#scanCount'), '0');
+
+    await page.fill('#manualInput', '202310001');
+    await page.click('#manualSubmit');
+    await page.waitForSelector('#confirmCard', { state: 'visible' });
+    await page.click('#confirmYesBtn');
     await page.waitForFunction(() => document.getElementById('resTitle').textContent.includes('VERIFIED'));
     assert.strictEqual(await page.textContent('#scanCount'), '1');
 
     await page.waitForTimeout(350);
-    await page.fill('#manualInput', 'WRONG_EVT');
+    await page.fill('#manualInput', 'v2|OTHER|202310001|WRONG');
     await page.click('#manualSubmit');
     await page.waitForFunction(() => document.getElementById('resName').textContent === 'WRONG EVENT');
 
     await page.waitForTimeout(350);
-    await page.fill('#manualInput', 'V1_RET');
+    await page.fill('#manualInput', 'v2|CSSO-2026|202310001|V1_RET');
     await page.click('#manualSubmit');
     await page.waitForFunction(() => document.getElementById('resName').textContent === 'LEGACY PASS RETIRED');
 
     // 6. Server failure recovers cleanly without deadlocking isProcessing
     srv.setForceServerFail(true);
     await page.waitForTimeout(350);
-    await page.fill('#manualInput', 'VALID_PASS');
+    await page.fill('#manualInput', 'v2|CSSO-2026|202310001|VALID');
     await page.click('#manualSubmit');
     await page.waitForFunction(() => document.getElementById('resTitle').textContent === 'REJECTED');
     srv.setForceServerFail(false);
@@ -167,7 +188,7 @@ async function run() {
     // 7. UNAUTHORIZED redirects back to PIN screen
     srv.setForceUnauthorized(true);
     await page.waitForTimeout(1300);
-    await page.fill('#manualInput', 'VALID_PASS');
+    await page.fill('#manualInput', 'v2|CSSO-2026|202310001|VALID');
     await page.click('#manualSubmit');
     await page.waitForSelector('#pinScreen', { state: 'visible' });
 

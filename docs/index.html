@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="dark light" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://script.google.com https://script.googleusercontent.com; media-src 'self' blob:; base-uri 'self'; form-action 'self';" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; media-src 'self' blob:; base-uri 'self'; form-action 'self';" />
   <title>CvSU CSSO Usher QR Scanner</title>
   <link rel="preconnect" href="https://script.google.com" crossorigin />
   <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin />
@@ -309,6 +309,46 @@
     .sub-info { font-size: 14px; opacity: 0.95; }
     .error-text { color: var(--err-text); font-size: 13px; min-height: 18px; }
     .status-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .toggle-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+    .toggle-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0;
+      cursor: pointer;
+    }
+    .toggle-label input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      min-height: 18px;
+      margin: 0;
+      padding: 0;
+      accent-color: var(--primary);
+    }
+    .confirm-card {
+      display: none;
+      background: var(--dup-bg);
+      border: 2px solid var(--dup-border);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 12px;
+      text-align: center;
+      contain: layout style paint;
+    }
+    button.confirm-btn { background: #16a34a; color: #fff; }
+    button.confirm-btn:hover { background: #15803d; }
+    button.danger-btn { background: #dc2626; color: #fff; }
+    button.danger-btn:hover { background: #b91c1c; }
     .visually-hidden:where(:not(:focus-within, :active)) {
       position: absolute !important;
       clip-path: inset(50%) !important;
@@ -359,6 +399,16 @@
       <div id="resSub" class="sub-info"></div>
     </div>
 
+    <div id="confirmCard" class="confirm-card" role="alertdialog" aria-labelledby="confirmTitle" aria-describedby="confirmSub">
+      <div id="confirmTitle" style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase;">CHECK PHYSICAL SCHOOL ID</div>
+      <div id="confirmName" class="big-name"></div>
+      <div id="confirmSub" class="sub-info" style="margin-bottom:12px;"></div>
+      <div class="btn-row">
+        <button id="confirmYesBtn" type="button" class="confirm-btn" onclick="confirmPendingScan()">✓ Confirm &amp; Record</button>
+        <button id="confirmNoBtn" type="button" class="danger-btn" onclick="cancelPendingScan()">✕ Cancel / Mismatch</button>
+      </div>
+    </div>
+
     <div class="card">
       <div class="header-row">
         <h2 id="eventTitle" style="margin:0; font-size:18px;">Event Scanner</h2>
@@ -373,6 +423,18 @@
         <button id="syncNowBtn" class="secondary small-btn" type="button" onclick="flushScanQueue(true)">Sync Now</button>
       </div>
       <div id="syncAlertNote" class="error-text" style="display:none; margin-bottom:8px;"></div>
+
+      <div class="toggle-row">
+        <label class="toggle-label" for="verifyIdToggle">
+          <input id="verifyIdToggle" type="checkbox" checked />
+          Verify ID First
+        </label>
+        <label class="toggle-label" for="strictOnlineToggle">
+          <input id="strictOnlineToggle" type="checkbox" />
+          Strict Online
+        </label>
+        <button id="refreshRosterBtn" class="secondary small-btn" type="button" onclick="refreshRosterSnapshot()">Refresh Roster</button>
+      </div>
 
       <label for="stageSelect">
         Active Checkpoint Stage
@@ -404,11 +466,11 @@
     </div>
 
     <div class="card">
-      <label for="manualInput">Manual Pass Code</label>
-      <span id="manual-hint" class="hint">Fallback if camera unavailable — Format: v2|EVENT|ID|TOKEN</span>
+      <label for="manualInput">Manual Check-In by Student ID</label>
+      <span id="manual-hint" class="hint">For cracked screen / dead phone — type Student ID and verify physical School ID</span>
       <form id="manualForm" class="manual-row" onsubmit="submitManualCode(event)">
-        <input id="manualInput" type="text" placeholder="STUDENTID|TOKEN" autocomplete="off" aria-describedby="manual-hint" />
-        <button id="manualSubmit" type="submit">Submit</button>
+        <input id="manualInput" type="text" placeholder="e.g., 202300328" autocomplete="off" aria-describedby="manual-hint" />
+        <button id="manualSubmit" type="submit">Look Up</button>
       </form>
     </div>
   </div>
@@ -417,9 +479,12 @@
 <script>
   const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec';
   const GAS_EXEC_RE = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
+  const IS_LOCAL_HOST = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
+  const LOCAL_API_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/[A-Za-z0-9_\/-]+$/;
   const rawApiParam = (new URLSearchParams(window.location.search).get('api') || '').trim();
-  const UNTRUSTED_API_WARNING = Boolean(rawApiParam && !GAS_EXEC_RE.test(rawApiParam));
-  const API_URL = GAS_EXEC_RE.test(rawApiParam) ? rawApiParam : DEFAULT_API_URL;
+  const isTrustedApi = GAS_EXEC_RE.test(rawApiParam) || (IS_LOCAL_HOST && LOCAL_API_RE.test(rawApiParam));
+  const UNTRUSTED_API_WARNING = Boolean(rawApiParam && !isTrustedApi);
+  const API_URL = isTrustedApi ? rawApiParam : DEFAULT_API_URL;
   const SESSION_KEY = 'csso_session_token';
   const LOCAL_SEEN_KEY = 'csso_local_seen_v1';
   const SCAN_QUEUE_KEY = 'csso_scan_queue_v1';
@@ -452,6 +517,7 @@
   let audioCtx = null;
   let keepWarmTimer = null;
   let syncTimer = null;
+  let pendingConfirm = null;
 
   function normalizeIdLocal(id) {
     return String(id || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -588,6 +654,11 @@
         return;
       }
       if (res && res.ok) {
+        if (res.lockedStage || res.eventId) {
+          snapshotLockedStage = res.lockedStage || snapshotLockedStage;
+          activeEventId = res.eventId || activeEventId;
+          applyStageLockUI(snapshotLockedStage, activeEventId);
+        }
         scanQueue = scanQueue.filter(x => !batchIds.has(x.clientId));
         saveScanQueue();
         if (res.seen) {
@@ -601,6 +672,7 @@
         }
         const rejected = (res.results || []).filter(r => r.status && r.status !== 'OK');
         if (rejected.length > 0) {
+          playTone('bad');
           acceptedCount = Math.max(0, acceptedCount - rejected.length);
           const countEl = document.getElementById('scanCount');
           if (countEl) countEl.textContent = String(acceptedCount);
@@ -609,7 +681,7 @@
           if (alertEl) {
             alertEl.style.display = 'block';
             const last = rejected[rejected.length - 1];
-            alertEl.textContent = `Sync notice (${syncAlerts}): ${last.studentId || 'Scan'} -> ${last.status}`;
+            alertEl.textContent = `ALERT — Sync rejected (${syncAlerts}): ${last.studentId || 'Scan'} -> ${last.status}`;
           }
         }
       }
@@ -702,11 +774,35 @@
     try { sessionStorage.setItem(LOCAL_SEEN_KEY, JSON.stringify(localSeen)); } catch (e) {}
   }
 
+  async function refreshRosterSnapshot() {
+    const btn = document.getElementById('refreshRosterBtn');
+    const origText = btn ? btn.textContent : 'Refresh Roster';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Refreshing...';
+    }
+    try {
+      await loadSnapshot();
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = origText;
+      }
+    }
+  }
+
   function startKeepWarm() {
     if (keepWarmTimer) return;
-    keepWarmTimer = setInterval(() => {
+    keepWarmTimer = setInterval(async () => {
       if (!sessionToken || document.hidden || isProcessing) return;
-      apiCall({ action: 'ping' }).catch(() => {});
+      try {
+        const ping = await apiCall({ action: 'ping' });
+        if (ping && ping.ok && (ping.lockedStage || ping.eventId)) {
+          snapshotLockedStage = ping.lockedStage || snapshotLockedStage;
+          activeEventId = ping.eventId || activeEventId;
+          applyStageLockUI(snapshotLockedStage, activeEventId);
+        }
+      } catch (e) {}
     }, KEEP_WARM_INTERVAL_MS);
   }
 
@@ -811,6 +907,9 @@
     stopKeepWarm();
     stopSyncLoop();
     stopCamera();
+    pendingConfirm = null;
+    const confirmCard = document.getElementById('confirmCard');
+    if (confirmCard) confirmCard.style.display = 'none';
     sessionToken = '';
     snapshotReady = false;
     localSeen = {};
@@ -943,7 +1042,131 @@
     }
   }
 
+  function setStatusReady() {
+    isProcessing = false;
+    const statusEl = document.getElementById('statusNote');
+    if (statusEl) {
+      statusEl.textContent = (html5QrCode && html5QrCode.isScanning) ? 'Scanning active.' : 'Ready.';
+    }
+  }
+
+  function showConfirmCard(pending) {
+    pendingConfirm = pending;
+    isProcessing = false;
+    const banner = document.getElementById('resultBanner');
+    if (banner) banner.style.display = 'none';
+    const card = document.getElementById('confirmCard');
+    document.getElementById('confirmTitle').textContent =
+      pending.mode === 'manual' ? 'MANUAL CHECK-IN — VERIFY SCHOOL ID' : 'CHECK PHYSICAL SCHOOL ID';
+    document.getElementById('confirmName').textContent = pending.fullName || pending.studentId;
+    document.getElementById('confirmSub').textContent =
+      `ID: ${pending.studentId} | ${pending.section || 'No Section'} | Stage: ${pending.stage}`;
+    card.style.display = 'block';
+    document.getElementById('statusNote').textContent = 'Check physical School ID, then Confirm or Cancel.';
+  }
+
+  function cancelPendingScan() {
+    pendingConfirm = null;
+    lastCameraPayload = '';
+    const card = document.getElementById('confirmCard');
+    if (card) card.style.display = 'none';
+    isProcessing = false;
+    document.getElementById('statusNote').textContent = 'Scan cancelled (School ID not confirmed).';
+  }
+
+  async function confirmPendingScan() {
+    if (!pendingConfirm || isProcessing) return;
+    isProcessing = true;
+    const pending = pendingConfirm;
+    pendingConfirm = null;
+    const card = document.getElementById('confirmCard');
+    if (card) card.style.display = 'none';
+
+    if (pending.mode === 'queue') {
+      commitQueuedScan(pending.payload, pending.stage, pending.check);
+      setTimeout(setStatusReady, 250);
+    } else if (pending.mode === 'manual') {
+      await executeManualScanOnline(pending.studentId, pending.stage);
+    } else {
+      await executeOnlineScan(pending.payload, pending.stage);
+    }
+  }
+
+  function commitQueuedScan(payloadText, stage, check) {
+    snapshotSeen[check.normId] = (snapshotSeen[check.normId] || 0) | check.bit;
+    const nowIso = new Date().toISOString();
+    const nowTime = new Date().toTimeString().slice(0, 8);
+    scanQueue.push({
+      clientId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      payload: payloadText,
+      stage,
+      scannedAt: nowIso,
+      eventId: activeEventId,
+      normId: check.normId,
+      bit: check.bit
+    });
+    saveScanQueue();
+    rememberLocalSeen(activeEventId, stage, payloadText, check);
+    showResult({
+      status: 'OK',
+      studentId: check.studentId,
+      fullName: check.fullName,
+      section: check.section,
+      stage,
+      time: `${nowTime} • queued`
+    });
+    if (scanQueue.length >= SYNC_BATCH_THRESHOLD && !isSyncing) {
+      flushScanQueue(false);
+    }
+  }
+
+  async function executeOnlineScan(payloadText, stage) {
+    const statusEl = document.getElementById('statusNote');
+    statusEl.textContent = 'Checking pass...';
+    try {
+      const res = await apiCall({ action: 'scan', sessionToken, payload: payloadText, stage });
+      if (res && res.status === 'UNAUTHORIZED') {
+        isProcessing = false;
+        playTone('bad');
+        returnToPinScreen(res.message || 'Session expired. Please log in again.');
+        return;
+      }
+      if (res && (res.status === 'OK' || res.status === 'DUPLICATE')) {
+        rememberLocalSeen(res.eventId || activeEventId, stage, payloadText, res);
+      }
+      showResult(res || { status: 'ERROR', message: 'Empty server response.' });
+      setTimeout(setStatusReady, 300);
+    } catch (err) {
+      showResult({ status: 'ERROR', message: (err && err.message) || 'Network error.' });
+      setTimeout(setStatusReady, 600);
+    }
+  }
+
+  async function executeManualScanOnline(studentId, stage) {
+    const statusEl = document.getElementById('statusNote');
+    statusEl.textContent = 'Recording manual check-in...';
+    try {
+      const res = await apiCall({ action: 'manualScan', sessionToken, studentId, stage });
+      if (res && res.status === 'UNAUTHORIZED') {
+        isProcessing = false;
+        playTone('bad');
+        returnToPinScreen(res.message || 'Session expired. Please log in again.');
+        return;
+      }
+      if (res && res.status === 'OK' && snapshotReady) {
+        const nid = normalizeIdLocal(res.studentId || studentId);
+        snapshotSeen[nid] = (snapshotSeen[nid] || 0) | (STAGE_BITS[stage] || 0);
+      }
+      showResult(res || { status: 'ERROR', message: 'Empty server response.' });
+      setTimeout(setStatusReady, 300);
+    } catch (err) {
+      showResult({ status: 'ERROR', message: (err && err.message) || 'Network error.' });
+      setTimeout(setStatusReady, 600);
+    }
+  }
+
   function onScanSuccess(decodedText) {
+    if (pendingConfirm || isProcessing) return;
     const now = Date.now();
     if (decodedText === lastCameraPayload && (now - lastCameraTime) < CAMERA_COOLDOWN_MS) {
       return;
@@ -953,64 +1176,120 @@
     submitScan(decodedText, false);
   }
 
-  function submitManualCode(ev) {
+  async function submitManualCode(ev) {
     if (ev) ev.preventDefault();
+    if (pendingConfirm || isProcessing) return;
     const input = document.getElementById('manualInput');
     const code = input.value.trim();
     if (!code) return;
-    submitScan(code, true);
     input.value = '';
+
+    if (code.includes('|')) {
+      submitScan(code, true);
+      return;
+    }
+
+    const stage = document.getElementById('stageSelect').value;
+    if (snapshotLockedStage && snapshotLockedStage !== 'AUTO' && stage !== snapshotLockedStage) {
+      showResult({ status: 'REJECTED_STAGE_LOCKED', message: `Scanner is locked to ${snapshotLockedStage}.` });
+      return;
+    }
+
+    const verifyFirst = Boolean(document.getElementById('verifyIdToggle') && document.getElementById('verifyIdToggle').checked);
+    const normId = normalizeIdLocal(code);
+    const tuple = snapshotReady ? snapshotRoster[normId] : null;
+    if (tuple) {
+      const [studentId, fullName, section] = tuple;
+      const mask = snapshotSeen[normId] || 0;
+      const bit = STAGE_BITS[stage] || 0;
+      if (mask & bit) {
+        showResult({ status: 'DUPLICATE', studentId, fullName, section, message: `Already scanned for ${stage}.` });
+        return;
+      }
+      if (snapshotEnforceOrder) {
+        if (stage === 'Mid-Event' && !(mask & STAGE_BITS['Check-In'])) {
+          showResult({ status: 'REJECTED_STAGE_ORDER', studentId, fullName, message: 'Must complete Check-In before Mid-Event.' });
+          return;
+        }
+        if (stage === 'Check-Out' && !(mask & STAGE_BITS['Mid-Event'])) {
+          showResult({ status: 'REJECTED_STAGE_ORDER', studentId, fullName, message: 'Must complete Mid-Event before Check-Out.' });
+          return;
+        }
+      }
+      if (verifyFirst) {
+        showConfirmCard({ mode: 'manual', studentId, fullName, section, stage });
+        return;
+      }
+      isProcessing = true;
+      await executeManualScanOnline(studentId, stage);
+      return;
+    }
+
+    if (verifyFirst) {
+      showConfirmCard({
+        mode: 'manual',
+        studentId: code,
+        fullName: 'Manual Check-In: ' + code,
+        section: snapshotReady ? 'Not in local snapshot (server will verify)' : 'Server will verify Roster',
+        stage
+      });
+      return;
+    }
+    isProcessing = true;
+    await executeManualScanOnline(code, stage);
   }
 
   async function submitScan(payloadText, fromManual) {
-    if (isProcessing) return;
+    if (pendingConfirm || isProcessing) return;
     isProcessing = true;
 
     const stage = document.getElementById('stageSelect').value;
-    const statusEl = document.getElementById('statusNote');
+    const verifyFirst = Boolean(document.getElementById('verifyIdToggle') && document.getElementById('verifyIdToggle').checked);
+    const strictOnline = Boolean(document.getElementById('strictOnlineToggle') && document.getElementById('strictOnlineToggle').checked);
 
-    const resetReady = () => {
-      isProcessing = false;
-      statusEl.textContent = (html5QrCode && html5QrCode.isScanning) ? 'Scanning active.' : 'Ready.';
-    };
-
-    // Option A: Instant (<10ms) Offline-First Batch Mode when snapshot is loaded
-    if (snapshotReady) {
+    // Offline-First Batch Mode when snapshot is loaded and Strict Online is OFF
+    if (!strictOnline && snapshotReady) {
       const check = validateScanLocally(payloadText, stage);
       if (!check.fallbackOnline) {
         if (check.ok) {
-          snapshotSeen[check.normId] = (snapshotSeen[check.normId] || 0) | check.bit;
-          const nowIso = new Date().toISOString();
-          const nowTime = new Date().toTimeString().slice(0, 8);
-          scanQueue.push({
-            clientId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-            payload: payloadText,
-            stage,
-            scannedAt: nowIso,
-            eventId: activeEventId,
-            normId: check.normId,
-            bit: check.bit
-          });
-          saveScanQueue();
-          rememberLocalSeen(activeEventId, stage, payloadText, check);
-          showResult({
-            status: 'OK',
-            studentId: check.studentId,
-            fullName: check.fullName,
-            section: check.section,
-            stage,
-            time: `${nowTime} • queued`
-          });
-          if (scanQueue.length >= SYNC_BATCH_THRESHOLD && !isSyncing) {
-            flushScanQueue(false);
+          if (verifyFirst) {
+            showConfirmCard({
+              mode: 'queue',
+              payload: payloadText,
+              studentId: check.studentId,
+              fullName: check.fullName,
+              section: check.section,
+              stage,
+              check
+            });
+            return;
           }
-          setTimeout(resetReady, 250);
+          commitQueuedScan(payloadText, stage, check);
+          setTimeout(setStatusReady, 250);
           return;
         } else {
           showResult(check);
-          setTimeout(resetReady, 250);
+          setTimeout(setStatusReady, 250);
           return;
         }
+      }
+    } else if (strictOnline && snapshotReady) {
+      const check = validateScanLocally(payloadText, stage);
+      if (!check.fallbackOnline && !check.ok) {
+        showResult(check);
+        setTimeout(setStatusReady, 250);
+        return;
+      }
+      if (verifyFirst && !check.fallbackOnline && check.ok) {
+        showConfirmCard({
+          mode: 'online',
+          payload: payloadText,
+          studentId: check.studentId,
+          fullName: check.fullName,
+          section: check.section,
+          stage
+        });
+        return;
       }
     }
 
@@ -1025,29 +1304,11 @@
         section: hit.section,
         message: `Already scanned for ${stage} (instant local check).`
       });
-      setTimeout(resetReady, 300);
+      setTimeout(setStatusReady, 300);
       return;
     }
 
-    statusEl.textContent = 'Checking pass...';
-
-    try {
-      const res = await apiCall({ action: 'scan', sessionToken, payload: payloadText, stage });
-      if (res && res.status === 'UNAUTHORIZED') {
-        isProcessing = false;
-        playTone('bad');
-        returnToPinScreen(res.message || 'Session expired. Please log in again.');
-        return;
-      }
-      if (res && (res.status === 'OK' || res.status === 'DUPLICATE')) {
-        rememberLocalSeen(res.eventId || activeEventId, stage, payloadText, res);
-      }
-      showResult(res || { status: 'ERROR', message: 'Empty server response.' });
-      setTimeout(resetReady, 300);
-    } catch (err) {
-      showResult({ status: 'ERROR', message: (err && err.message) || 'Network error.' });
-      setTimeout(resetReady, 600);
-    }
+    await executeOnlineScan(payloadText, stage);
   }
 
   function showResult(res) {

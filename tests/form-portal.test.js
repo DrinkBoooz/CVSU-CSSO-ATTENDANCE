@@ -295,6 +295,74 @@ function run() {
     assert.ok(formInfo.getConfirmationMessage().includes(expectedUrl));
   }
 
+  // 7. Personal Pass PIN hashed into Roster Col O and enforced on lookupStudentPass
+  {
+    const env = makeFixture();
+    const { ctx, sheets } = env;
+    const roster = sheets.get('Roster');
+
+    ctx.onRegistrationFormSubmit({
+      namedValues: {
+        'Student ID': ['202310055'],
+        'Email Address': ['pinuser@cvsu.edu.ph'],
+        'Full Name': ['Pin Protected User'],
+        'Section': ['BSCS 4-1'],
+        'Personal Pass PIN': ['4829']
+      }
+    });
+
+    const addedRow = roster._data[2];
+    assert.strictEqual(addedRow[0], '202310055');
+    assert.ok(addedRow[14] && addedRow[14] !== '4829', 'PIN must be hashed, never plaintext');
+
+    // Missing or wrong PIN -> rejected (NOT_FOUND)
+    const missingPin = ctx.lookupStudentPass('202310055', 'pinuser@cvsu.edu.ph', '');
+    assert.strictEqual(missingPin.ok, false);
+    assert.strictEqual(missingPin.status, 'NOT_FOUND');
+
+    const wrongPin = ctx.lookupStudentPass('202310055', 'pinuser@cvsu.edu.ph', '9999');
+    assert.strictEqual(wrongPin.ok, false);
+    assert.strictEqual(wrongPin.status, 'NOT_FOUND');
+
+    // Correct PIN -> succeeds
+    const validLookup = ctx.lookupStudentPass('202310055', 'pinuser@cvsu.edu.ph', '4829');
+    assert.strictEqual(validLookup.ok, true);
+    assert.strictEqual(validLookup.studentId, '202310055');
+
+    // Legacy row without Pass PIN Hash still works with ID + Email
+    const legacyLookup = ctx.lookupStudentPass('202310001', 'juan@cvsu.edu.ph', '');
+    assert.strictEqual(legacyLookup.ok, true);
+  }
+
+  // 8. recordManualScan enforces auth/stage-lock/dedupe & logs [MANUAL], and ping/batch return lockedStage
+  {
+    const env = makeFixture();
+    const { ctx, sheets } = env;
+    const login = ctx.verifyUsherPin('619482', 'Gate B');
+    assert.strictEqual(login.ok, true);
+
+    assert.strictEqual(ctx.recordManualScan('bad.tok', '202310001', 'Check-In').status, 'UNAUTHORIZED');
+    assert.strictEqual(ctx.recordManualScan(login.sessionToken, '202399999', 'Check-In').status, 'REJECTED_NOT_IN_ROSTER');
+
+    const ok = ctx.recordManualScan(login.sessionToken, '202310001', 'Check-In');
+    assert.strictEqual(ok.status, 'OK');
+    assert.strictEqual(ok.manual, true);
+    assert.strictEqual(ok.fullName, 'Juan Dela Cruz');
+
+    const logRow = sheets.get('Attendance Log')._data[1];
+    assert.strictEqual(logRow[5], 'Gate B [MANUAL]');
+    assert.strictEqual(logRow[6], 'ACCEPTED');
+
+    const dup = ctx.recordManualScan(login.sessionToken, '202310001', 'Check-In');
+    assert.strictEqual(dup.status, 'DUPLICATE');
+
+    const pingOut = JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify({ action: 'ping' }) } }).getContent());
+    assert.strictEqual(pingOut.lockedStage, 'AUTO');
+
+    const batchOut = ctx.recordScanBatch(login.sessionToken, []);
+    assert.strictEqual(batchOut.ok, true);
+  }
+
   console.log('PASS: form-portal.test.js');
 }
 

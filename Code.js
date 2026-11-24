@@ -358,6 +358,7 @@ function doPost(e) {
         status: "OK",
         version: APP_BUILD_VERSION,
         eventId: cfg.EVENT_ID,
+        lockedStage: cfg.LOCKED_STAGE,
       });
     }
     if (action === "login") {
@@ -372,11 +373,18 @@ function doPost(e) {
     if (action === "scan") {
       return jsonOut(recordScan(body.sessionToken, body.payload, body.stage));
     }
+    if (action === "manualScan") {
+      return jsonOut(
+        recordManualScan(body.sessionToken, body.studentId, body.stage),
+      );
+    }
     if (action === "scanBatch") {
       return jsonOut(recordScanBatch(body.sessionToken, body.scans));
     }
     if (action === "lookupPass") {
-      return jsonOut(lookupStudentPass(body.studentId, body.email));
+      return jsonOut(
+        lookupStudentPass(body.studentId, body.email, body.passPin),
+      );
     }
     return jsonOut({
       ok: false,
@@ -528,10 +536,19 @@ function hashEmailForCache_(cleanEmail, cfg) {
     : sha256HexPrefix_(email, 16);
 }
 
+function hashPassPin_(normId, rawPin, cfg) {
+  const pin = String(rawPin || "").trim();
+  if (!pin || !normId) return "";
+  const input = `pin|${normId}|${pin}`;
+  return cfg && cfg.SECRET_SALT
+    ? hmacSha256Hex_(input, cfg.SECRET_SALT, 16)
+    : sha256HexPrefix_(input, 16);
+}
+
 /**
- * Rebuilds all 16 compact tuple shards ([studentId, fullName, section, emailHash]) from Roster
- * in a single sheet read + single CacheService.putAll() RPC. Scales O(1) to ~22,000+ students.
- * emailHash is HMAC-keyed and kept strictly server-side (stripped before returning snapshot).
+ * Rebuilds all 16 compact tuple shards ([studentId, fullName, section, emailHash, pinHash])
+ * from Roster in a single sheet read + single CacheService.putAll() RPC. Scales O(1) to ~22,000+ students.
+ * emailHash and pinHash are HMAC-keyed and kept strictly server-side (stripped before returning snapshot).
  */
 function rebuildRosterShards_(ss) {
   const rosterSheet = ss.getSheetByName("Roster");
@@ -541,7 +558,8 @@ function rebuildRosterShards_(ss) {
   const shards = Array.from({ length: ROSTER_SHARD_COUNT }, () => ({}));
   const lastRow = rosterSheet.getLastRow();
   if (lastRow > 1) {
-    const rows = rosterSheet.getRange(2, 1, lastRow - 1, 4).getValues();
+    const colCount = Math.min(15, Math.max(4, rosterSheet.getLastColumn()));
+    const rows = rosterSheet.getRange(2, 1, lastRow - 1, colCount).getValues();
     for (let i = 0; i < rows.length; i++) {
       const rId = String(rows[i][0] || "")
         .trim()
@@ -553,11 +571,13 @@ function rebuildRosterShards_(ss) {
       const cleanEmail = String(rows[i][1] || "")
         .trim()
         .toLowerCase();
+      const pinHash = colCount >= 15 ? String(rows[i][14] || "").trim() : "";
       shards[b][normId] = [
         rId,
         String(rows[i][2] || "").trim(),
         String(rows[i][3] || "").trim(),
         cleanEmail ? hashEmailForCache_(cleanEmail, cfg) : "",
+        pinHash,
       ];
     }
   }
@@ -620,6 +640,7 @@ function getRosterEntry_(ss, normId) {
       fullName: tuple[1],
       section: tuple[2],
       emailHash: tuple[3] || "",
+      pinHash: tuple[4] || "",
     },
   };
 }
@@ -1428,7 +1449,148 @@ function recordScanBatch(sessionToken, scans) {
       putEventSeenIndex_(cfg.EVENT_ID, seenIndex);
     }
 
-    return { ok: true, eventId: cfg.EVENT_ID, results, seen: seenIndex };
+    return {
+      ok: true,
+      eventId: cfg.EVENT_ID,
+      lockedStage: cfg.LOCKED_STAGE,
+      results,
+      seen: seenIndex,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Usher-authenticated manual check-in fallback by Student ID (for cracked screens / dead batteries).
+ * Always records `[MANUAL]` in the Usher Label column for auditability.
+ */
+function recordManualScan(sessionToken, studentIdInput, stage) {
+  const cfg = getConfig_();
+  const sess = verifySessionToken_(sessionToken, cfg);
+  if (!sess.ok) {
+    return {
+      status: "UNAUTHORIZED",
+      message: "Session expired or invalid. Please log in again.",
+    };
+  }
+
+  const cleanStage = String(stage || "").trim();
+  if (!VALID_STAGES.includes(cleanStage)) {
+    return { status: "ERROR", message: "Invalid checkpoint stage." };
+  }
+
+  if (
+    cfg.LOCKED_STAGE &&
+    cfg.LOCKED_STAGE !== "AUTO" &&
+    cleanStage !== cfg.LOCKED_STAGE
+  ) {
+    return {
+      status: "REJECTED_STAGE_LOCKED",
+      message: `Scanner is locked to ${cfg.LOCKED_STAGE}.`,
+    };
+  }
+
+  const normId = normalizeId_(studentIdInput);
+  if (!normId) {
+    return {
+      status: "REJECTED_MALFORMED",
+      message: "Please enter a valid Student ID.",
+    };
+  }
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const rosterLookup = getRosterEntry_(ss, normId);
+  if (rosterLookup.missingSheet) {
+    return { status: "ERROR", message: "Missing Roster sheet." };
+  }
+  const studentRecord = rosterLookup.record;
+  if (!studentRecord) {
+    return {
+      status: "REJECTED_NOT_IN_ROSTER",
+      message: `Student ID ${String(studentIdInput || "").trim()} not found in Roster.`,
+    };
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) {
+    return {
+      status: "ERROR",
+      message: "Scanner busy. Please try again in 1 second.",
+    };
+  }
+
+  try {
+    const logSheet = ss.getSheetByName("Attendance Log");
+    if (!logSheet) {
+      return { status: "ERROR", message: "Missing Attendance Log sheet." };
+    }
+
+    const now = new Date();
+    const manualLabel = safeCell_(`${sess.usherLabel} [MANUAL]`);
+    const logManualAttempt = (status) => {
+      logSheet.appendRow([
+        now,
+        cleanStage,
+        safeCell_(studentRecord.studentId),
+        safeCell_(studentRecord.fullName),
+        safeCell_(studentRecord.section),
+        manualLabel,
+        status,
+        safeCell_(cfg.EVENT_ID),
+      ]);
+    };
+
+    const seenIndex = getEventSeenIndex_(cfg.EVENT_ID, logSheet);
+    const seenMask = seenIndex[normId] || 0;
+    const stageBit = STAGE_BITS[cleanStage] || 0;
+
+    if (seenMask & stageBit) {
+      logManualAttempt("DUPLICATE");
+      return {
+        status: "DUPLICATE",
+        fullName: studentRecord.fullName,
+        section: studentRecord.section,
+        studentId: studentRecord.studentId,
+        message: `Already scanned for ${cleanStage}.`,
+      };
+    }
+
+    if (cfg.ENFORCE_STAGE_ORDER) {
+      if (cleanStage === "Mid-Event" && !(seenMask & STAGE_BITS["Check-In"])) {
+        logManualAttempt("REJECTED_STAGE_ORDER");
+        return {
+          status: "REJECTED_STAGE_ORDER",
+          fullName: studentRecord.fullName,
+          studentId: studentRecord.studentId,
+          message: "Must complete Check-In before Mid-Event.",
+        };
+      }
+      if (cleanStage === "Check-Out" && !(seenMask & STAGE_BITS["Mid-Event"])) {
+        logManualAttempt("REJECTED_STAGE_ORDER");
+        return {
+          status: "REJECTED_STAGE_ORDER",
+          fullName: studentRecord.fullName,
+          studentId: studentRecord.studentId,
+          message: "Must complete Mid-Event before Check-Out.",
+        };
+      }
+    }
+
+    logManualAttempt("ACCEPTED");
+    seenIndex[normId] = seenMask | stageBit;
+    putEventSeenIndex_(cfg.EVENT_ID, seenIndex);
+
+    return {
+      status: "OK",
+      manual: true,
+      fullName: studentRecord.fullName,
+      section: studentRecord.section,
+      studentId: studentRecord.studentId,
+      stage: cleanStage,
+      eventId: cfg.EVENT_ID,
+      time: Utilities.formatDate(now, Session.getScriptTimeZone(), "HH:mm:ss"),
+    };
   } finally {
     lock.releaseLock();
   }
@@ -1529,7 +1691,7 @@ function clearAttendanceLogsAndVerified() {
 function clearAllDataRows() {
   return clearSheetDataRows_(
     [
-      { name: "Roster", minCols: 14 },
+      { name: "Roster", minCols: 15 },
       { name: "Attendance Log", minCols: 8 },
       { name: "Verified Attendance", minCols: 8 },
     ],
@@ -1606,6 +1768,13 @@ function setupRegistrationFormAndTrigger() {
     .requireTextMatchesPattern("^[A-Za-z]{2,10}[ -]?[1-5][ -]?[A-Za-z0-9]{1,3}$")
     .build();
 
+  const pinValidation = FormApp.createTextValidation()
+    .setHelpText(
+      "Choose a private 4 to 6 digit numeric PIN (e.g. 4829) to protect your QR Pass.",
+    )
+    .requireTextMatchesPattern("^[0-9]{4,6}$")
+    .build();
+
   if (!form) {
     form = FormApp.create(`${cfg.EVENT_TITLE} - Student Registration`);
     formId = form.getId();
@@ -1659,9 +1828,9 @@ function setupRegistrationFormAndTrigger() {
   form.setConfirmationMessage(
     `Registration received for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID})!\n\n` +
       "View and download your signed QR Attendance Pass immediately on the Pass Portal " +
-      "(enter your Student ID and the exact email you used here):\n" +
+      "(enter your Student ID, exact Email, and your Personal Pass PIN):\n" +
       `${portalUrl}\n\n` +
-      "Save a screenshot of your QR pass and bring your physical School ID to the venue.",
+      "Save a screenshot of your QR pass card and bring your physical School ID to the venue.",
   );
 
   const ensureTextQuestion = (title, helpText, validation) => {
@@ -1682,6 +1851,11 @@ function setupRegistrationFormAndTrigger() {
   ensureTextQuestion("Student ID", "Example: 202300328", idValidation);
   ensureTextQuestion("Full Name", "Example: Dela Cruz, Juan M.", nameValidation);
   ensureTextQuestion("Section", "Example: BSCS 3-1", sectionValidation);
+  ensureTextQuestion(
+    "Personal Pass PIN",
+    "Choose a private 4–6 digit PIN to protect your QR Pass (e.g. 4829)",
+    pinValidation,
+  );
 
   // Link destination AFTER all questions exist so all columns (including Section) are created cleanly
   if (createdNew) {
@@ -1853,6 +2027,7 @@ function onRegistrationFormSubmit(e) {
       .toUpperCase();
     const fullName = pick(["Full Name", "Name"]);
     const section = pick(["Section", "Course & Section", "Year & Section"]);
+    const passPin = pick(["Personal Pass PIN", "Pass PIN", "PIN"]);
 
     if (!studentId || !cleanEmail) {
       console.warn(
@@ -1880,10 +2055,6 @@ function onRegistrationFormSubmit(e) {
       issueProtocol === "v2"
         ? createV2Signature_(issueEventId, studentId, cfg.SECRET_SALT)
         : createSignature_(studentId, cfg.SECRET_SALT);
-    const payload =
-      issueProtocol === "v2"
-        ? `v2|${issueEventId}|${studentId}|${token}`
-        : `${studentId}|${token}`;
 
     // Strict 1-submission-per-student enforcement (by Student ID OR Email):
     // never overwrite an existing Roster row from a public Form re-submission.
@@ -1908,6 +2079,7 @@ function onRegistrationFormSubmit(e) {
       }
     }
 
+    const pinHash = passPin ? hashPassPin_(normId, passPin, cfg) : "";
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const passStatus = emailRegex.test(cleanEmail)
       ? "READY_ON_PORTAL"
@@ -1928,6 +2100,7 @@ function onRegistrationFormSubmit(e) {
       lastError,
       issueProtocol,
       issueEventId,
+      pinHash,
     ];
 
     rosterSheet.appendRow(rowValues);
@@ -1943,7 +2116,7 @@ function onRegistrationFormSubmit(e) {
  * Uses a generic error + 1.5s delay on mismatch to prevent enumeration/brute-force.
  * Returns a server-signed QR payload and inline PNG data URI (zero secrets exposed).
  */
-function lookupStudentPass(studentIdInput, emailInput) {
+function lookupStudentPass(studentIdInput, emailInput, passPinInput) {
   const cfg = getConfig_();
   try {
     requireSecureConfig_(cfg);
@@ -1961,7 +2134,7 @@ function lookupStudentPass(studentIdInput, emailInput) {
     return {
       ok: false,
       status: "INVALID_INPUT",
-      message: "Please enter both your Student ID and registered Email.",
+      message: "Please enter your Student ID, registered Email, and Pass PIN.",
     };
   }
 
@@ -1986,34 +2159,46 @@ function lookupStudentPass(studentIdInput, emailInput) {
       ok: false,
       status: "NOT_FOUND",
       message:
-        "No matching registration found. Verify your Student ID and the exact email you submitted.",
+        "No matching registration found. Verify your Student ID, Email, and Pass PIN.",
     };
   }
 
   const emailHash = hashEmailForCache_(cleanEmail, cfg);
-  let entry = lookup.record;
-  let matched =
-    entry &&
-    entry.emailHash &&
-    constantTimeEqual_(entry.emailHash, emailHash)
-      ? entry
-      : null;
+  const isEntryMatch = (rec) => {
+    if (
+      !rec ||
+      !rec.emailHash ||
+      !constantTimeEqual_(rec.emailHash, emailHash)
+    ) {
+      return false;
+    }
+    if (rec.pinHash) {
+      const providedPinHash = hashPassPin_(normId, passPinInput, cfg);
+      if (!providedPinHash || !constantTimeEqual_(rec.pinHash, providedPinHash)) {
+        return false;
+      }
+    }
+    return true;
+  };
 
-  // Heal stale cached Roster shard once if email was corrected directly in the sheet
+  const entry = lookup.record;
+  let matched = isEntryMatch(entry) ? entry : null;
+
+  // Heal stale cached Roster shard once if email or Pass PIN was corrected directly in the sheet
   if (!matched && entry && lookup.fromCache) {
     const liveShards = rebuildRosterShards_(ss);
     const liveTuple = liveShards ? liveShards[rosterShardIdx_(normId)][normId] : null;
-    if (
-      liveTuple &&
-      liveTuple[3] &&
-      constantTimeEqual_(liveTuple[3], emailHash)
-    ) {
-      matched = {
+    if (liveTuple) {
+      const liveRec = {
         studentId: liveTuple[0],
         fullName: liveTuple[1],
         section: liveTuple[2],
-        emailHash: liveTuple[3],
+        emailHash: liveTuple[3] || "",
+        pinHash: liveTuple[4] || "",
       };
+      if (isEntryMatch(liveRec)) {
+        matched = liveRec;
+      }
     }
   }
 
@@ -2729,6 +2914,7 @@ function ensureSheetsAndHeaders_(ss) {
         "Last Error",
         "Pass Protocol",
         "Pass Event ID",
+        "Pass PIN Hash",
       ],
     },
     {
