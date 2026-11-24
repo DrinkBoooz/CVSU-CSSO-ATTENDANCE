@@ -59,7 +59,11 @@ function startTestServer() {
     }
     const ext = path.extname(filePath);
     const mime =
-      ext === ".js" ? "application/javascript" : "text/html; charset=utf-8";
+      ext === ".js"
+        ? "application/javascript; charset=utf-8"
+        : ext === ".css"
+          ? "text/css; charset=utf-8"
+          : "text/html; charset=utf-8";
     res.writeHead(200, { "Content-Type": mime });
     fs.createReadStream(filePath).pipe(res);
   });
@@ -102,7 +106,7 @@ async function run() {
       'meta[http-equiv="Content-Security-Policy"]',
       "content",
     );
-    assert.ok(!/script-src[^;]*unsafe-inline/.test(csp), "CSP allows inline scripts");
+    assert.ok(!/unsafe-inline/.test(csp), "CSP must not allow unsafe-inline anywhere");
 
     // 2. Wrong PIN -> clean error state, button re-enabled
     await page.fill("#studentIdInput", "202310001");

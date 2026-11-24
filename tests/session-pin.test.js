@@ -76,15 +76,19 @@ function run() {
         ]
       }
     });
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 20; i++) {
       const r = ctx.verifyUsherPin('111111', 'Attacker');
       assert.strictEqual(r.ok, false);
       assert.strictEqual(r.message, 'Incorrect Usher PIN.');
     }
-    assert.ok(sleeps.length >= 15);
-    // Legitimate usher with valid PIN is NOT globally locked out
+    assert.strictEqual(sleeps.length, 20);
+    assert.strictEqual(sleeps[0], 1500);
+    assert.strictEqual(sleeps[9], 3000);
+    assert.strictEqual(sleeps[19], 5000);
+    // Legitimate usher with valid PIN is NOT globally locked out and gets 0ms delay
     const legit = ctx.verifyUsherPin('742915', 'Legit');
     assert.strictEqual(legit.ok, true);
+    assert.strictEqual(sleeps.length, 20);
   }
 
   console.log('PASS: session-pin.test.js');
