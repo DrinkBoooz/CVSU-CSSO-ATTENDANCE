@@ -88,23 +88,28 @@ If you want your own branded domain (`https://<your-username>.github.io/<your-re
 
 *Only needed if you are modifying source code locally, running automated tests, or deploying via CLI (not needed for event organizers):*
 
-- **Git**
-- **Node.js 22+** (includes `npm`)
-- **Install test dependencies:**
+### One-Click Setup
+- **Windows (PowerShell)** — auto-checks/installs Git & Node.js LTS via `winget`, runs `npm ci`, installs Playwright Chromium, and runs `npm test`:
   ```powershell
-  npm ci
-  npx playwright install chromium
+  .\scripts\setup-dev.ps1
+  # Optional: include Apps Script CLI (@google/clasp)
+  .\scripts\setup-dev.ps1 -WithClasp
   ```
-- **Run full verification suite:**
+- **macOS / Linux (Bash):**
+  ```bash
+  chmod +x ./scripts/setup-dev.sh && ./scripts/setup-dev.sh
+  # Optional: include @google/clasp
+  ./scripts/setup-dev.sh --with-clasp
+  ```
+- **Already have Node.js 22+ installed?** Run a single npm command:
   ```powershell
-  npm test
+  npm run setup
   ```
-- **Optional (CLI push to Apps Script instead of browser editor):**
-  ```powershell
-  npm install -g @google/clasp
-  clasp login
-  ```
-  *(Update `.clasp.json` with your own `scriptId` before running `clasp push`.)*
+
+### Manual Setup (Reference)
+- **Git** & **Node.js 22+** (includes `npm`)
+- `npm ci` + `npx playwright install chromium` + `npm test`
+- Optional CLI deploys: `npm install -g @google/clasp` + `clasp login` *(update `.clasp.json` with your own `scriptId` before running `clasp push`)*.
 
 ---
 
