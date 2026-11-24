@@ -598,6 +598,34 @@
         }
       }
 
+      let userSelectedCameraId = "";
+
+      async function populateCameraList() {
+        try {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+          const all = await navigator.mediaDevices.enumerateDevices();
+          const cams = all.filter((d) => d.kind === "videoinput");
+          const select = document.getElementById("cameraSelect");
+          const wrap = document.getElementById("cameraPickerWrap");
+          if (!select || !wrap || cams.length === 0) return;
+
+          const prev = userSelectedCameraId || select.value;
+          while (select.firstChild) select.removeChild(select.firstChild);
+          cams.forEach((d, idx) => {
+            const opt = document.createElement("option");
+            opt.value = d.deviceId;
+            opt.textContent = d.label || "Camera " + (idx + 1);
+            select.appendChild(opt);
+          });
+          if (prev && cams.some((c) => c.deviceId === prev)) {
+            select.value = prev;
+          }
+          if (cams.length > 1) wrap.style.display = "block";
+        } catch (e) {
+          // ignore device enumeration errors
+        }
+      }
+
       async function startCamera() {
         if (isStarting) return;
         isStarting = true;
@@ -616,48 +644,87 @@
           }
           if (html5QrCode.isScanning) {
             await stopCamera();
+            await new Promise((r) => setTimeout(r, 250));
           }
 
-          statusEl.textContent = "Requesting camera permission...";
-          const devices = await Html5Qrcode.getCameras();
-          const select = document.getElementById("cameraSelect");
-          const wrap = document.getElementById("cameraPickerWrap");
+          statusEl.textContent = "Starting camera...";
+          const scanConfig = { fps: 10, qrbox: { width: 240, height: 240 } };
 
-          let cameraConfig = { facingMode: "environment" };
-          if (devices && devices.length > 0) {
-            if (select.options.length === 0) {
-              devices.forEach((d, idx) => {
-                const opt = document.createElement("option");
-                opt.value = d.id;
-                opt.textContent = d.label || "Camera " + (idx + 1);
-                select.appendChild(opt);
-              });
-              const rear = devices.find((d) =>
-                /back|rear|environment/i.test(d.label || ""),
+          // Build ordered fallback candidates: avoid getCameras() pre-open race & macro/depth lens traps
+          const candidates = [];
+          if (userSelectedCameraId) {
+            candidates.push(userSelectedCameraId);
+          }
+          candidates.push({ facingMode: "environment" });
+          candidates.push({ facingMode: "user" });
+
+          let started = false;
+          let lastErr = null;
+          for (let i = 0; i < candidates.length; i++) {
+            if (!sessionToken) return;
+            try {
+              await html5QrCode.start(
+                candidates[i],
+                scanConfig,
+                onScanSuccess,
+                () => {},
               );
-              select.value = rear ? rear.id : devices[0].id;
-              if (devices.length > 1) wrap.style.display = "block";
+              started = true;
+              break;
+            } catch (err) {
+              lastErr = err;
+              const msg = String(err && err.message ? err.message : err);
+              if (/NotAllowedError|Permission/i.test(msg)) throw err;
+              try {
+                if (html5QrCode.isScanning) await html5QrCode.stop();
+              } catch (e) {}
+              await new Promise((r) => setTimeout(r, 250));
             }
-            cameraConfig = select.value || devices[0].id;
           }
 
-          if (!sessionToken) return;
-          await html5QrCode.start(
-            cameraConfig,
-            { fps: 10, qrbox: { width: 240, height: 240 } },
-            onScanSuccess,
-            () => {},
-          );
+          // Final fallback: enumerate available videoinput IDs and try any untested camera
+          if (!started && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+            try {
+              const all = await navigator.mediaDevices.enumerateDevices();
+              const cams = all.filter((d) => d.kind === "videoinput" && d.deviceId);
+              for (let i = 0; i < cams.length; i++) {
+                if (!sessionToken) return;
+                if (cams[i].deviceId === userSelectedCameraId) continue;
+                try {
+                  await html5QrCode.start(
+                    cams[i].deviceId,
+                    scanConfig,
+                    onScanSuccess,
+                    () => {},
+                  );
+                  started = true;
+                  break;
+                } catch (err) {
+                  lastErr = err;
+                  await new Promise((r) => setTimeout(r, 200));
+                }
+              }
+            } catch (e) {}
+          }
+
+          if (!started) {
+            throw lastErr || new Error("Could not start video source");
+          }
+
           if (!sessionToken) {
             await stopCamera();
             return;
           }
+          await populateCameraList();
           statusEl.textContent = "Scanning active.";
         } catch (err) {
           const msg = String(err && err.message ? err.message : err);
           if (/NotAllowedError|Permission/i.test(msg)) {
             statusEl.textContent =
-              "Camera permission denied. Allow camera in browser site settings or use Manual Pass Code below.";
+              "Camera permission denied. Allow camera in browser site settings or use Manual Check-In below.";
+          } else if (/NotReadableError|Could not start video|TrackStartError|AbortError/i.test(msg)) {
+            statusEl.textContent =
+              "Camera is busy or unavailable (close other apps/tabs using the camera and tap Start Camera again, or use Manual Check-In below).";
           } else {
             statusEl.textContent = "Camera error: " + msg;
           }
@@ -668,6 +735,8 @@
       }
 
       async function switchCamera() {
+        const select = document.getElementById("cameraSelect");
+        userSelectedCameraId = select ? select.value : "";
         if (html5QrCode && html5QrCode.isScanning) {
           await stopCamera();
           await startCamera();
