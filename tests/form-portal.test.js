@@ -200,13 +200,17 @@ function run() {
     assert.strictEqual(configMap().get('REGISTRATION_FORM_URL'), formInfo.publishedUrl);
     assert.strictEqual(configMap().get('REGISTRATION_FORM_EDIT_URL'), formInfo.editUrl);
 
-    // Remove Config rows and confirm applyAllSystemUpgrades restores REGISTRATION_FORM_EDIT_URL automatically
+    // Remove Config rows and confirm applyAllSystemUpgrades restores Form links + auto-fills PORTAL_BASE_URL & WEB_APP_URL
     env.sheets.get('Config')._data = env.sheets.get('Config')._data.filter(
       r => r[0] !== 'REGISTRATION_FORM_URL' && r[0] !== 'REGISTRATION_FORM_EDIT_URL'
     );
+    const detectedExec = 'https://script.google.com/macros/s/AKfycbxMockDetectedExec123/exec';
+    env.ctx.ScriptApp.getService = () => ({ getUrl: () => detectedExec });
     env.ctx.applyAllSystemUpgrades();
     assert.strictEqual(configMap().get('REGISTRATION_FORM_URL'), formInfo.publishedUrl);
     assert.strictEqual(configMap().get('REGISTRATION_FORM_EDIT_URL'), formInfo.editUrl);
+    assert.strictEqual(configMap().get('PORTAL_BASE_URL'), 'https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE');
+    assert.strictEqual(configMap().get('WEB_APP_URL'), detectedExec);
   }
 
   // 4. clearAttendanceLogsAndVerified clears Attendance Log & Verified Attendance while keeping Roster & Config
