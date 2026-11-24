@@ -215,6 +215,16 @@ function normalizeId_(id) {
 }
 
 /**
+ * Advisory-only check for the recommended EVENT_ID format MM-YYYY-Org-EventName
+ * (e.g. 02-2027-CSSO-GA). Never blocks; any value passing validateV2Field_ stays valid.
+ */
+function isRecommendedEventIdFormat_(eventId) {
+  return /^(0[1-9]|1[0-2])-\d{4}-[A-Za-z0-9]+(-[A-Za-z0-9]+)+$/.test(
+    String(eventId || ""),
+  );
+}
+
+/**
  * Creates a stateless HMAC-SHA256 signed session token tied to SECRET_SALT and USHER_PIN.
  * Rotating USHER_PIN immediately invalidates all previously issued tokens.
  */
@@ -2851,7 +2861,25 @@ function applyAllSystemUpgrades() {
   runStep("Security Audit", () => {
     const cfg = getConfig_();
     requireSecureConfig_(cfg);
-    return `PIN & Salt valid (EVENT_ID=${cfg.EVENT_ID}, LOCKED_STAGE=${cfg.LOCKED_STAGE})`;
+    const advisories = [];
+    if (cfg.EVENT_ID === "DEFAULT") {
+      advisories.push(
+        "still on legacy v1 EVENT_ID=DEFAULT; set a dedicated EVENT_ID for v2 event-bound passes",
+      );
+    } else if (!isRecommendedEventIdFormat_(cfg.EVENT_ID)) {
+      advisories.push(
+        "EVENT_ID is valid but not in the recommended MM-YYYY-Org-EventName format (e.g. 02-2027-CSSO-GA)",
+      );
+    }
+    if (String(cfg.USHER_PIN).length < 8) {
+      advisories.push(
+        "USHER_PIN is under 8 digits; use Security & Secrets > Change Usher PIN (blank = auto 8-digit)",
+      );
+    }
+    return (
+      `PIN & Salt valid (EVENT_ID=${cfg.EVENT_ID}, LOCKED_STAGE=${cfg.LOCKED_STAGE})` +
+      (advisories.length ? ` | ADVISORY: ${advisories.join("; ")}` : "")
+    );
   });
 
   SpreadsheetApp.getUi().alert(
@@ -2885,6 +2913,19 @@ function syncRegistrationFormConfigLinks_(ss) {
 }
 
 function ensureConfigKeys_(ss) {
+  const EVENT_ID_NOTE =
+    "Unique event code (scopes duplicates & Verified Attendance). Recommended format: MM-YYYY-Org-EventName, e.g. 02-2027-CSSO-GA. No spaces or | characters.";
+  const LOCKED_STAGE_NOTE =
+    "AUTO (default) lets ushers pick the stage; or lock to Check-In, Mid-Event, or Check-Out";
+  const LEGACY_EVENT_ID_NOTES = [
+    "Unique identifier for the active event (scopes duplicates and Verified Attendance)",
+    "Active event ID",
+  ];
+  const LEGACY_LOCKED_STAGE_NOTES = [
+    "Set to Check-In, Mid-Event, Check-Out, or AUTO",
+    "Set to Check-In, Mid-Event, Check-Out, or AUTO (if AUTO, ushers pick stage manually)",
+    "Stage lock",
+  ];
   let sheet = ss.getSheetByName("Config");
   if (!sheet) {
     sheet = ss.insertSheet("Config");
@@ -2899,9 +2940,9 @@ function ensureConfigKeys_(ss) {
     [
       "EVENT_ID",
       "DEFAULT",
-      "Unique identifier for the active event (scopes duplicates and Verified Attendance)",
+      EVENT_ID_NOTE,
     ],
-    ["LOCKED_STAGE", "AUTO", "Set to Check-In, Mid-Event, Check-Out, or AUTO"],
+    ["LOCKED_STAGE", "AUTO", LOCKED_STAGE_NOTE],
     [
       "ENFORCE_STAGE_ORDER",
       "FALSE",
@@ -2946,6 +2987,13 @@ function ensureConfigKeys_(ss) {
     } else if (k === "PORTAL_BASE_URL" && !v) {
       sheet.getRange(i + 1, 2).setValue(defaultPortalBase);
       filled.push("PORTAL_BASE_URL");
+    }
+    // Refresh legacy/default guidance notes without touching the user's values
+    if (k === "EVENT_ID" && LEGACY_EVENT_ID_NOTES.includes(String(updatedRows[i][2] || "").trim())) {
+      sheet.getRange(i + 1, 3).setValue(EVENT_ID_NOTE);
+    }
+    if (k === "LOCKED_STAGE" && LEGACY_LOCKED_STAGE_NOTES.includes(String(updatedRows[i][2] || "").trim())) {
+      sheet.getRange(i + 1, 3).setValue(LOCKED_STAGE_NOTE);
     }
   }
   const parts = [];
@@ -3447,14 +3495,19 @@ function changeUsherPinPrompt() {
   const ui = SpreadsheetApp.getUi();
   const prompt = ui.prompt(
     "🔑 Change Usher PIN",
-    "Enter a new 6+ digit numeric Usher PIN.\n\nNote: Changing the PIN immediately logs out all active usher sessions.",
+    "Leave blank to auto-generate a random 8-digit PIN (recommended), or enter your own 6+ digit numeric PIN (8+ digits recommended).\n\nNote: Changing the PIN immediately logs out all active usher sessions.",
     ui.ButtonSet.OK_CANCEL,
   );
   if (prompt.getSelectedButton() !== ui.Button.OK) {
     return { ok: false, reason: "CANCELLED" };
   }
 
-  const newPin = String(prompt.getResponseText() || "").trim();
+  let newPin = String(prompt.getResponseText() || "").trim();
+  let generated = false;
+  if (!newPin) {
+    newPin = generateRandomPin_(8);
+    generated = true;
+  }
   if (!/^\d{6,}$/.test(newPin)) {
     ui.alert(
       "Invalid PIN",
@@ -3482,10 +3535,29 @@ function changeUsherPinPrompt() {
 
   ui.alert(
     "Usher PIN Updated",
-    `New Usher PIN saved to ${storage}.\n\nAll previous usher login sessions have been immediately invalidated.`,
+    `New Usher PIN saved to ${storage}.` +
+      (generated
+        ? `\n\nGenerated PIN (shown once, share only with ushers): ${newPin}`
+        : "") +
+      `\n\nAll previous usher login sessions have been immediately invalidated.`,
     ui.ButtonSet.OK,
   );
-  return { ok: true, storage };
+  return { ok: true, storage, generated };
+}
+
+/**
+ * Generates a random numeric PIN of the given length from UUID-derived entropy.
+ */
+function generateRandomPin_(length) {
+  let digits = "";
+  while (digits.length < length) {
+    const hex = sha256HexPrefix_(
+      `${Utilities.getUuid()}|${Utilities.getUuid()}|${Date.now()}|${digits.length}`,
+      12,
+    );
+    digits += String(parseInt(hex, 16));
+  }
+  return digits.substring(digits.length - length);
 }
 
 /**
