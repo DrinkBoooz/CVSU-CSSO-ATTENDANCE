@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CvSU CSSO Usher QR Scanner</title>
-  <script src="./vendor/html5-qrcode.min.js"></script>
+  <script src="./vendor/html5-qrcode.min.js" defer></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -573,6 +573,10 @@
     const statusEl = document.getElementById('statusNote');
 
     try {
+      if (typeof Html5Qrcode === 'undefined') {
+        statusEl.textContent = 'Camera library still loading, tap Start Camera again in a second.';
+        return;
+      }
       if (!html5QrCode) {
         html5QrCode = new Html5Qrcode('reader');
       }

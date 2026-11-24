@@ -12,7 +12,7 @@ const ROSTER_CACHE_TTL_SEC = 300; // 5 minutes
 const DEDUPE_CACHE_TTL_SEC = 3600; // 1 hour (write-through optimization only; Attendance Log is authoritative)
 const EVENT_INDEX_CACHE_PREFIX = "evt_idx_v1_";
 const EMAIL_TIME_BUDGET_MS = 270000; // 4.5 minutes
-const APP_BUILD_VERSION = "2026.11.24-phase4-batch";
+const APP_BUILD_VERSION = "2026.11.24-phase4-perf-o1";
 
 /**
  * Reads key-value configuration from ScriptProperties (single batched RPC)
@@ -515,8 +515,9 @@ function rosterShardIdx_(normId) {
 }
 
 /**
- * Rebuilds all 16 compact tuple shards ([studentId, fullName, section]) from Roster
- * in a single sheet read + single CacheService.putAll() RPC. Scales O(1) to ~28,000 students.
+ * Rebuilds all 16 compact tuple shards ([studentId, fullName, section, emailHash]) from Roster
+ * in a single sheet read + single CacheService.putAll() RPC. Scales O(1) to ~22,000+ students.
+ * emailHash is kept strictly server-side and stripped before returning snapshot to clients.
  */
 function rebuildRosterShards_(ss) {
   const rosterSheet = ss.getSheetByName("Roster");
@@ -534,10 +535,14 @@ function rebuildRosterShards_(ss) {
       if (!normId) continue;
       const b = rosterShardIdx_(normId);
       if (shards[b][normId]) continue; // preserve first entry on duplicate normalized ID
+      const cleanEmail = String(rows[i][1] || "")
+        .trim()
+        .toLowerCase();
       shards[b][normId] = [
         rId,
         String(rows[i][2] || "").trim(),
         String(rows[i][3] || "").trim(),
+        cleanEmail ? sha256HexPrefix_(cleanEmail, 16) : "",
       ];
     }
   }
@@ -592,7 +597,12 @@ function getRosterEntry_(ss, normId) {
   if (!tuple) return { missingSheet: false, record: null };
   return {
     missingSheet: false,
-    record: { studentId: tuple[0], fullName: tuple[1], section: tuple[2] },
+    record: {
+      studentId: tuple[0],
+      fullName: tuple[1],
+      section: tuple[2],
+      emailHash: tuple[3] || "",
+    },
   };
 }
 
@@ -1006,17 +1016,20 @@ function getScannerSnapshot(sessionToken) {
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const rosterMap = getRosterMap_(ss, true);
-  if (!rosterMap) {
+  const shards = rebuildRosterShards_(ss);
+  if (!shards) {
     return { ok: false, status: "ERROR", message: "Missing Roster sheet." };
   }
 
   const compactRoster = {};
-  const keys = Object.keys(rosterMap);
-  for (let i = 0; i < keys.length; i++) {
-    const k = keys[i];
-    const rec = rosterMap[k];
-    compactRoster[k] = [rec.studentId, rec.fullName, rec.section];
+  for (let b = 0; b < shards.length; b++) {
+    const bucket = shards[b];
+    const keys = Object.keys(bucket);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      const tuple = bucket[k];
+      compactRoster[k] = [tuple[0], tuple[1], tuple[2]];
+    }
   }
 
   const logSheet = ss.getSheetByName("Attendance Log");
@@ -1842,8 +1855,8 @@ function lookupStudentPass(studentIdInput, emailInput) {
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const rosterSheet = ss.getSheetByName("Roster");
-  if (!rosterSheet || rosterSheet.getLastRow() <= 1) {
+  const lookup = getRosterEntry_(ss, normId);
+  if (lookup.missingSheet) {
     Utilities.sleep(1500);
     return {
       ok: false,
@@ -1853,22 +1866,14 @@ function lookupStudentPass(studentIdInput, emailInput) {
     };
   }
 
-  const rows = rosterSheet
-    .getRange(2, 1, rosterSheet.getLastRow() - 1, 4)
-    .getValues();
-  let matched = null;
-  for (let i = 0; i < rows.length; i++) {
-    const rId = String(rows[i][0] || "").trim().toUpperCase();
-    const rEmail = String(rows[i][1] || "").trim().toLowerCase();
-    if (normalizeId_(rId) === normId && rEmail === cleanEmail) {
-      matched = {
-        studentId: rId,
-        fullName: String(rows[i][2] || "").trim(),
-        section: String(rows[i][3] || "").trim(),
-      };
-      break;
-    }
-  }
+  const emailHash = sha256HexPrefix_(cleanEmail, 16);
+  const entry = lookup.record;
+  const matched =
+    entry &&
+    entry.emailHash &&
+    constantTimeEqual_(entry.emailHash, emailHash)
+      ? entry
+      : null;
 
   if (!matched) {
     Utilities.sleep(1500);

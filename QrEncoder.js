@@ -2318,18 +2318,27 @@ function generateQrPngBlob_(payload, filename) {
 
   const modules = qr.getModuleCount();
   const quiet = 4;
-  const scale = 6;
-  const size = (modules + quiet * 2) * scale;
+  const scale = 4;
+  const totalModules = modules + quiet * 2;
+  const size = totalModules * scale;
+  const rowBytes = Math.ceil(size / 8);
 
-  // Build raw scanlines: filter byte (0) + grayscale pixels (0=black, 255=white)
+  // Build 1-bit grayscale scanlines (0=black, 1=white, MSB-first) once per module row
   const raw = [];
-  for (let py = 0; py < size; py++) {
-    raw.push(0);
-    const my = Math.floor(py / scale) - quiet;
-    for (let px = 0; px < size; px++) {
-      const mx = Math.floor(px / scale) - quiet;
+  for (let my = -quiet; my < modules + quiet; my++) {
+    const line = new Array(1 + rowBytes).fill(0);
+    for (let mx = -quiet; mx < modules + quiet; mx++) {
       const dark = my >= 0 && my < modules && mx >= 0 && mx < modules && qr.isDark(my, mx);
-      raw.push(dark ? 0x00 : 0xff);
+      if (!dark) {
+        const pxStart = (mx + quiet) * scale;
+        for (let sx = 0; sx < scale; sx++) {
+          const px = pxStart + sx;
+          line[1 + (px >> 3)] |= 1 << (7 - (px & 7));
+        }
+      }
+    }
+    for (let sy = 0; sy < scale; sy++) {
+      for (let k = 0; k < line.length; k++) raw.push(line[k]);
     }
   }
 
@@ -2380,7 +2389,7 @@ function generateQrPngBlob_(payload, filename) {
 
   const ihdr = [
     ...u32(size), ...u32(size),
-    8, // bit depth
+    1, // bit depth (1-bit monochrome grayscale)
     0, // grayscale
     0, 0, 0
   ];
