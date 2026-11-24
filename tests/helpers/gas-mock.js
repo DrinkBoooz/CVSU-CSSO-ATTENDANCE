@@ -218,7 +218,26 @@ function loadCode(opts = {}) {
     put(k, v, ttlSec) {
       cacheStore.set(k, { val: String(v), exp: ttlSec ? Date.now() + ttlSec * 1000 : null });
     },
+    getAll(keys) {
+      const out = {};
+      for (const k of (keys || [])) {
+        const v = cache.get(k);
+        if (v !== null) out[k] = v;
+      }
+      return out;
+    },
+    putAll(values, ttlSec) {
+      if (!values) return;
+      for (const [k, v] of Object.entries(values)) {
+        cache.put(k, v, ttlSec);
+      }
+    },
     remove(k) { cacheStore.delete(k); },
+    removeAll(keys) {
+      for (const k of (keys || [])) {
+        cacheStore.delete(k);
+      }
+    },
     _store: cacheStore
   };
 

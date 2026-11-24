@@ -140,9 +140,10 @@ function run() {
   {
     const { ctx, sheets, cache, token, tok1 } = makeFixture();
     assert.strictEqual(ctx.recordScan(token, `202310001|${tok1}`, 'Check-In').status, 'OK');
-    assert.ok(cache.get('roster_map_v1') !== null);
+    const shardKey = `roster_v2_s${ctx.rosterShardIdx_('202310001')}`;
+    assert.ok(cache.get(shardKey) !== null);
     ctx.onSheetEdit({ range: { getSheet: () => sheets.get('Roster') } });
-    assert.strictEqual(cache.get('roster_map_v1'), null);
+    assert.strictEqual(cache.get(shardKey), null);
   }
 
   // 8. Cache eviction on dedupe index falls back to authoritative Attendance Log
@@ -178,12 +179,12 @@ function run() {
     assert.strictEqual(lock._isHeld(), false);
 
     // Exception inside lock still calls releaseLock() via finally
-    const origGetRange = sheets.get('Attendance Log').getRange.bind(sheets.get('Attendance Log'));
-    sheets.get('Attendance Log').getRange = () => { throw new Error('Simulated sheet failure'); };
+    const origAppendRow = sheets.get('Attendance Log').appendRow.bind(sheets.get('Attendance Log'));
+    sheets.get('Attendance Log').appendRow = () => { throw new Error('Simulated sheet failure'); };
     assert.throws(() => ctx.recordScan(token, `202310001|${tok1}`, 'Mid-Event'), /Simulated sheet failure/);
     assert.strictEqual(lockStats.releaseLockCalls, beforeRel + 2);
     assert.strictEqual(lock._isHeld(), false);
-    sheets.get('Attendance Log').getRange = origGetRange;
+    sheets.get('Attendance Log').appendRow = origAppendRow;
   }
 
   console.log('PASS: record-scan.test.js');
