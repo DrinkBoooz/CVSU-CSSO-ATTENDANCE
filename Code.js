@@ -1628,11 +1628,39 @@ function setupRegistrationFormAndTrigger() {
   } catch (e) {
     // setRequireLogin is Workspace-domain specific; ignore on personal accounts
   }
+  let portalUrl = "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html";
+  const gasExecRe = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
+  const prodExecUrl =
+    "https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec";
+  let webAppUrl = "";
+  const cfgSheetForPortal = ss.getSheetByName("Config");
+  if (cfgSheetForPortal && cfgSheetForPortal.getLastRow() > 1) {
+    const cfgRows = cfgSheetForPortal.getDataRange().getValues();
+    for (let i = 1; i < cfgRows.length; i++) {
+      if (String(cfgRows[i][0] || "").trim() === "WEB_APP_URL") {
+        webAppUrl = String(cfgRows[i][1] || "").trim();
+        break;
+      }
+    }
+  }
+  if (!gasExecRe.test(webAppUrl)) {
+    try {
+      const svcUrl =
+        typeof ScriptApp.getService === "function" && ScriptApp.getService()
+          ? String(ScriptApp.getService().getUrl() || "").trim()
+          : "";
+      if (gasExecRe.test(svcUrl)) webAppUrl = svcUrl;
+    } catch (e) {}
+  }
+  if (gasExecRe.test(webAppUrl) && webAppUrl !== prodExecUrl) {
+    portalUrl = `${portalUrl}?api=${encodeURIComponent(webAppUrl)}`;
+  }
+
   form.setConfirmationMessage(
     `Registration received for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID})!\n\n` +
       "View and download your signed QR Attendance Pass immediately on the Pass Portal " +
       "(enter your Student ID and the exact email you used here):\n" +
-      "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html\n\n" +
+      `${portalUrl}\n\n` +
       "Save a screenshot of your QR pass and bring your physical School ID to the venue.",
   );
 
@@ -1701,7 +1729,7 @@ function setupRegistrationFormAndTrigger() {
       `Form Edit URL (saved in Config):\n${editUrl}`,
     ui.ButtonSet.OK,
   );
-  return { ok: true, formId, publishedUrl, editUrl };
+  return { ok: true, formId, publishedUrl, editUrl, portalUrl };
 }
 
 /**
@@ -1790,16 +1818,36 @@ function onRegistrationFormSubmit(e) {
 
   try {
     const nv = e.namedValues || {};
+    const nvLower = {};
+    Object.keys(nv).forEach((k) => {
+      nvLower[String(k || "").trim().toLowerCase()] = nv[k];
+    });
     const pick = (keys) => {
       for (let i = 0; i < keys.length; i++) {
-        if (nv[keys[i]] && nv[keys[i]][0] !== undefined) {
-          return String(nv[keys[i]][0]).trim();
+        const hit = nvLower[String(keys[i] || "").trim().toLowerCase()];
+        if (hit && hit[0] !== undefined) {
+          return String(hit[0]).trim();
         }
       }
       return "";
     };
 
-    const cleanEmail = pick(["Email Address", "Email", "CvSU Email"]);
+    let cleanEmail = pick([
+      "Email Address",
+      "Email",
+      "CvSU Email",
+      "Address ng email",
+    ]);
+    if (!cleanEmail && Array.isArray(e.values)) {
+      const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      for (let i = 0; i < e.values.length; i++) {
+        const candidate = String(e.values[i] || "").trim();
+        if (emailPattern.test(candidate)) {
+          cleanEmail = candidate;
+          break;
+        }
+      }
+    }
     const studentId = pick(["Student ID", "Student Number", "ID"])
       .trim()
       .toUpperCase();

@@ -22,6 +22,8 @@ function attachFormMock(env, opts = {}) {
     return item;
   };
 
+  let confirmationMessage = '';
+
   const mockForm = {
     getId: () => formId,
     setTitle() { return mockForm; },
@@ -30,7 +32,7 @@ function attachFormMock(env, opts = {}) {
     setLimitOneResponsePerUser() { return mockForm; },
     setAllowResponseEdits() { return mockForm; },
     setRequireLogin() { return mockForm; },
-    setConfirmationMessage() { return mockForm; },
+    setConfirmationMessage(msg) { confirmationMessage = String(msg || ''); return mockForm; },
     getItems: () => textItems,
     addTextItem() {
       const it = makeTextItem();
@@ -79,7 +81,12 @@ function attachFormMock(env, opts = {}) {
     return base;
   };
 
-  return { formId, publishedUrl, editUrl };
+  return {
+    formId,
+    publishedUrl,
+    editUrl,
+    getConfirmationMessage: () => confirmationMessage
+  };
 }
 
 function makeFixture() {
@@ -238,6 +245,54 @@ function run() {
     assert.strictEqual(sheets.get('Roster').getLastRow(), 2);
     assert.ok(sheets.get('Config').getLastRow() >= 7);
     assert.strictEqual(cache.get(seenKey), null);
+  }
+
+  // 5. onRegistrationFormSubmit handles lowercase "Email address", localized headers, and e.values fallback
+  {
+    const env = makeFixture();
+    const { ctx, sheets } = env;
+    const roster = sheets.get('Roster');
+
+    // Google Forms standard header "Email address" (lowercase 'a')
+    ctx.onRegistrationFormSubmit({
+      namedValues: {
+        'Student ID': ['202310003'],
+        'Email address': ['lower@cvsu.edu.ph'],
+        'Full Name': ['Lower Case'],
+        'Section': ['BSCS 3-1']
+      }
+    });
+    assert.strictEqual(roster.getLastRow(), 3);
+    assert.strictEqual(roster._data[2][0], '202310003');
+    assert.strictEqual(roster._data[2][1], 'lower@cvsu.edu.ph');
+
+    // Unknown localized email header -> falls back to scanning e.values for an email
+    ctx.onRegistrationFormSubmit({
+      namedValues: {
+        'Student ID': ['202310004'],
+        'Direksyon ng Email': [''],
+        'Full Name': ['Locale Fallback'],
+        'Section': ['BSCS 3-2']
+      },
+      values: ['2026-11-24 13:00:00', 'fallback@cvsu.edu.ph', '202310004', 'Locale Fallback', 'BSCS 3-2']
+    });
+    assert.strictEqual(roster.getLastRow(), 4);
+    assert.strictEqual(roster._data[3][0], '202310004');
+    assert.strictEqual(roster._data[3][1], 'fallback@cvsu.edu.ph');
+  }
+
+  // 6. setupRegistrationFormAndTrigger embeds ?api= in confirmation URL when WEB_APP_URL is configured
+  {
+    const env = makeFixture();
+    const stagingApi = 'https://script.google.com/macros/s/AKfycbxLriHe2_WYcfJKfomxmFurzQt78Bd-q4A40D7SngVwqArNYb-FxDmhSNJBbrm6CDgD/exec';
+    env.sheets.get('Config').appendRow(['WEB_APP_URL', stagingApi, 'Staging Web App']);
+    const formInfo = attachFormMock(env);
+
+    const res = env.ctx.setupRegistrationFormAndTrigger();
+    assert.strictEqual(res.ok, true);
+    const expectedUrl = `https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html?api=${encodeURIComponent(stagingApi)}`;
+    assert.strictEqual(res.portalUrl, expectedUrl);
+    assert.ok(formInfo.getConfirmationMessage().includes(expectedUrl));
   }
 
   console.log('PASS: form-portal.test.js');
