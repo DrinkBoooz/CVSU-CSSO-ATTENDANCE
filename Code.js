@@ -1797,18 +1797,22 @@ function setupRegistrationFormAndTrigger() {
   } catch (e) {
     // setRequireLogin is Workspace-domain specific; ignore on personal accounts
   }
-  let portalUrl = "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html";
+  const prodPortalBase = "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE";
   const gasExecRe = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
   const prodExecUrl =
     "https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec";
+  let portalBase = prodPortalBase;
   let webAppUrl = "";
   const cfgSheetForPortal = ss.getSheetByName("Config");
   if (cfgSheetForPortal && cfgSheetForPortal.getLastRow() > 1) {
     const cfgRows = cfgSheetForPortal.getDataRange().getValues();
     for (let i = 1; i < cfgRows.length; i++) {
-      if (String(cfgRows[i][0] || "").trim() === "WEB_APP_URL") {
-        webAppUrl = String(cfgRows[i][1] || "").trim();
-        break;
+      const cfgKey = String(cfgRows[i][0] || "").trim();
+      const cfgVal = String(cfgRows[i][1] || "").trim();
+      if (cfgKey === "PORTAL_BASE_URL" && /^https:\/\/.+/.test(cfgVal)) {
+        portalBase = cfgVal.replace(/\/+$/, "");
+      } else if (cfgKey === "WEB_APP_URL" && cfgVal) {
+        webAppUrl = cfgVal;
       }
     }
   }
@@ -1821,7 +1825,11 @@ function setupRegistrationFormAndTrigger() {
       if (gasExecRe.test(svcUrl)) webAppUrl = svcUrl;
     } catch (e) {}
   }
-  if (gasExecRe.test(webAppUrl) && webAppUrl !== prodExecUrl) {
+  let portalUrl = `${portalBase}/pass.html`;
+  if (
+    gasExecRe.test(webAppUrl) &&
+    (webAppUrl !== prodExecUrl || portalBase !== prodPortalBase)
+  ) {
     portalUrl = `${portalUrl}?api=${encodeURIComponent(webAppUrl)}`;
   }
 
@@ -1981,6 +1989,28 @@ function replaceRegistrationForm() {
  * Installable onFormSubmit trigger: registers the student in Roster (deduped by Student ID)
  * and immediately emails their signed QR Attendance Pass via GmailApp.
  */
+function redactFormResponsePin_(e) {
+  try {
+    if (!e || !e.range || !e.range.getSheet || !e.range.getRow) return;
+    const sheet = e.range.getSheet();
+    const row = e.range.getRow();
+    if (!sheet || row <= 1) return;
+    const lastCol = sheet.getLastColumn();
+    if (lastCol < 1) return;
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    for (let c = 0; c < headers.length; c++) {
+      const h = String(headers[c] || "")
+        .trim()
+        .toLowerCase();
+      if (h === "personal pass pin" || h === "pass pin" || h === "pin") {
+        sheet.getRange(row, c + 1).setValue("[REDACTED]");
+      }
+    }
+  } catch (err) {
+    console.warn("redactFormResponsePin_ skipped:", err);
+  }
+}
+
 function onRegistrationFormSubmit(e) {
   if (!e || (!e.namedValues && !e.values)) return;
 
@@ -2106,6 +2136,7 @@ function onRegistrationFormSubmit(e) {
     rosterSheet.appendRow(rowValues);
     invalidateRosterCache_();
   } finally {
+    redactFormResponsePin_(e);
     lock.releaseLock();
   }
 }
@@ -2826,6 +2857,16 @@ function ensureConfigKeys_(ss) {
       "AUTO_EMAIL_ON_SUBMIT",
       "FALSE",
       "FALSE = zero-email QR Pass Portal mode (unlimited); set TRUE to also email on Form submit",
+    ],
+    [
+      "PORTAL_BASE_URL",
+      "",
+      "Optional custom GitHub Pages base URL for forks (e.g. https://<user>.github.io/<repo>)",
+    ],
+    [
+      "WEB_APP_URL",
+      "",
+      "Optional Apps Script Web App /exec URL embedded as ?api= in the Form confirmation link",
     ],
   ];
   const toAdd = defaults.filter(([k]) => !existingKeys.has(k));

@@ -293,13 +293,26 @@ function run() {
     const expectedUrl = `https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html?api=${encodeURIComponent(stagingApi)}`;
     assert.strictEqual(res.portalUrl, expectedUrl);
     assert.ok(formInfo.getConfirmationMessage().includes(expectedUrl));
+
+    // Fork with custom PORTAL_BASE_URL (trailing slash stripped cleanly)
+    env.sheets.get('Config').appendRow(['PORTAL_BASE_URL', 'https://myorg.github.io/my-attendance/', 'Fork Pages URL']);
+    const forkRes = env.ctx.setupRegistrationFormAndTrigger();
+    const expectedForkUrl = `https://myorg.github.io/my-attendance/pass.html?api=${encodeURIComponent(stagingApi)}`;
+    assert.strictEqual(forkRes.portalUrl, expectedForkUrl);
+    assert.ok(formInfo.getConfirmationMessage().includes(expectedForkUrl));
   }
 
-  // 7. Personal Pass PIN hashed into Roster Col O and enforced on lookupStudentPass
+  // 7. Personal Pass PIN hashed into Roster Col O, redacted from Form Responses, and enforced on lookupStudentPass
   {
     const env = makeFixture();
-    const { ctx, sheets } = env;
+    const { ctx, ss, sheets } = env;
     const roster = sheets.get('Roster');
+    const respSheet = ss.insertSheet('Form Responses 1');
+    respSheet._data = [
+      ['Timestamp', 'Email Address', 'Student ID', 'Full Name', 'Section', 'Personal Pass PIN'],
+      ['2026-11-24 14:00:00', 'pinuser@cvsu.edu.ph', '202310055', 'Pin Protected User', 'BSCS 4-1', '4829'],
+      ['2026-11-24 14:01:00', 'attacker@gmail.com', '2023-10055', 'Dup Spoof', 'BSCS 1-1', '7777']
+    ];
 
     ctx.onRegistrationFormSubmit({
       namedValues: {
@@ -308,12 +321,28 @@ function run() {
         'Full Name': ['Pin Protected User'],
         'Section': ['BSCS 4-1'],
         'Personal Pass PIN': ['4829']
-      }
+      },
+      range: { getSheet: () => respSheet, getRow: () => 2 }
     });
 
     const addedRow = roster._data[2];
     assert.strictEqual(addedRow[0], '202310055');
     assert.ok(addedRow[14] && addedRow[14] !== '4829', 'PIN must be hashed, never plaintext');
+    assert.strictEqual(respSheet._data[1][5], '[REDACTED]');
+
+    // Duplicate submission also redacts plaintext PIN from Form Responses
+    ctx.onRegistrationFormSubmit({
+      namedValues: {
+        'Student ID': ['2023-10055'],
+        'Email Address': ['attacker@gmail.com'],
+        'Full Name': ['Dup Spoof'],
+        'Section': ['BSCS 1-1'],
+        'Personal Pass PIN': ['7777']
+      },
+      range: { getSheet: () => respSheet, getRow: () => 3 }
+    });
+    assert.strictEqual(respSheet._data[2][5], '[REDACTED]');
+    assert.strictEqual(roster.getLastRow(), 3);
 
     // Missing or wrong PIN -> rejected (NOT_FOUND)
     const missingPin = ctx.lookupStudentPass('202310055', 'pinuser@cvsu.edu.ph', '');

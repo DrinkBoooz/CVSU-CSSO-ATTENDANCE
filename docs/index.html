@@ -1,1409 +1,1917 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="color-scheme" content="dark light" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; media-src 'self' blob:; base-uri 'self'; form-action 'self';" />
-  <title>CvSU CSSO Usher QR Scanner</title>
-  <link rel="preconnect" href="https://script.google.com" crossorigin />
-  <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin />
-  <script src="./vendor/html5-qrcode.min.js" defer></script>
-  <style>
-    :root {
-      color-scheme: dark light;
-      --bg-light: #f1f5f9;
-      --bg-dark: #090d16;
-      --surface-light: #ffffff;
-      --surface-dark: #111827;
-      --surface2-light: #f8fafc;
-      --surface2-dark: #0b1120;
-      --border-light: #cbd5e1;
-      --border-dark: #263248;
-      --text-light: #0f172a;
-      --text-dark: #f8fafc;
-      --muted-light: #475569;
-      --muted-dark: #94a3b8;
-      --primary-light: #1d4ed8;
-      --primary-dark: #3b82f6;
-      --primary-hover-light: #1e40af;
-      --primary-hover-dark: #2563eb;
-      --secondary-light: #e2e8f0;
-      --secondary-dark: #1e293b;
-      --secondary-text-light: #0f172a;
-      --secondary-text-dark: #e2e8f0;
-      --badge-bg-light: #dbeafe;
-      --badge-bg-dark: #1e3a8a;
-      --badge-text-light: #1e40af;
-      --badge-text-dark: #dbeafe;
-      --ok-bg-light: #ecfdf5;
-      --ok-bg-dark: #064e3b;
-      --ok-border-light: #059669;
-      --ok-border-dark: #34d399;
-      --dup-bg-light: #fffbeb;
-      --dup-bg-dark: #78350f;
-      --dup-border-light: #d97706;
-      --dup-border-dark: #fbbf24;
-      --bad-bg-light: #fef2f2;
-      --bad-bg-dark: #7f1d1d;
-      --bad-border-light: #dc2626;
-      --bad-border-dark: #f87171;
-      --err-text-light: #b91c1c;
-      --err-text-dark: #fca5a5;
-
-      --bg: var(--bg-dark);
-      --surface: var(--surface-dark);
-      --surface-2: var(--surface2-dark);
-      --border: var(--border-dark);
-      --text: var(--text-dark);
-      --muted: var(--muted-dark);
-      --primary: var(--primary-dark);
-      --primary-hover: var(--primary-hover-dark);
-      --secondary: var(--secondary-dark);
-      --secondary-text: var(--secondary-text-dark);
-      --badge-bg: var(--badge-bg-dark);
-      --badge-text: var(--badge-text-dark);
-      --ok-bg: var(--ok-bg-dark);
-      --ok-border: var(--ok-border-dark);
-      --dup-bg: var(--dup-bg-dark);
-      --dup-border: var(--dup-border-dark);
-      --bad-bg: var(--bad-bg-dark);
-      --bad-border: var(--bad-border-dark);
-      --err-text: var(--err-text-dark);
-      --radius: 14px;
-      accent-color: var(--primary);
-    }
-    @media (prefers-color-scheme: light) {
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://script.google.com https://script.googleusercontent.com; media-src 'self' blob:; base-uri 'self'; form-action 'self';"
+    />
+    <title>CvSU CSSO Usher QR Scanner</title>
+    <link rel="preconnect" href="https://script.google.com" crossorigin />
+    <link
+      rel="preconnect"
+      href="https://script.googleusercontent.com"
+      crossorigin
+    />
+    <script src="./config.js"></script>
+    <script src="./vendor/html5-qrcode.min.js" defer></script>
+    <style>
       :root {
-        --bg: var(--bg-light);
-        --surface: var(--surface-light);
-        --surface-2: var(--surface2-light);
-        --border: var(--border-light);
-        --text: var(--text-light);
-        --muted: var(--muted-light);
-        --primary: var(--primary-light);
-        --primary-hover: var(--primary-hover-light);
-        --secondary: var(--secondary-light);
-        --secondary-text: var(--secondary-text-light);
-        --badge-bg: var(--badge-bg-light);
-        --badge-text: var(--badge-text-light);
-        --ok-bg: var(--ok-bg-light);
-        --ok-border: var(--ok-border-light);
-        --dup-bg: var(--dup-bg-light);
-        --dup-border: var(--dup-border-light);
-        --bad-bg: var(--bad-bg-light);
-        --bad-border: var(--bad-border-light);
-        --err-text: var(--err-text-light);
+        color-scheme: dark light;
+        --bg-light: #f1f5f9;
+        --bg-dark: #090d16;
+        --surface-light: #ffffff;
+        --surface-dark: #111827;
+        --surface2-light: #f8fafc;
+        --surface2-dark: #0b1120;
+        --border-light: #cbd5e1;
+        --border-dark: #263248;
+        --text-light: #0f172a;
+        --text-dark: #f8fafc;
+        --muted-light: #475569;
+        --muted-dark: #94a3b8;
+        --primary-light: #1d4ed8;
+        --primary-dark: #3b82f6;
+        --primary-hover-light: #1e40af;
+        --primary-hover-dark: #2563eb;
+        --secondary-light: #e2e8f0;
+        --secondary-dark: #1e293b;
+        --secondary-text-light: #0f172a;
+        --secondary-text-dark: #e2e8f0;
+        --badge-bg-light: #dbeafe;
+        --badge-bg-dark: #1e3a8a;
+        --badge-text-light: #1e40af;
+        --badge-text-dark: #dbeafe;
+        --ok-bg-light: #ecfdf5;
+        --ok-bg-dark: #064e3b;
+        --ok-border-light: #059669;
+        --ok-border-dark: #34d399;
+        --dup-bg-light: #fffbeb;
+        --dup-bg-dark: #78350f;
+        --dup-border-light: #d97706;
+        --dup-border-dark: #fbbf24;
+        --bad-bg-light: #fef2f2;
+        --bad-bg-dark: #7f1d1d;
+        --bad-border-light: #dc2626;
+        --bad-border-dark: #f87171;
+        --err-text-light: #b91c1c;
+        --err-text-dark: #fca5a5;
+
+        --bg: var(--bg-dark);
+        --surface: var(--surface-dark);
+        --surface-2: var(--surface2-dark);
+        --border: var(--border-dark);
+        --text: var(--text-dark);
+        --muted: var(--muted-dark);
+        --primary: var(--primary-dark);
+        --primary-hover: var(--primary-hover-dark);
+        --secondary: var(--secondary-dark);
+        --secondary-text: var(--secondary-text-dark);
+        --badge-bg: var(--badge-bg-dark);
+        --badge-text: var(--badge-text-dark);
+        --ok-bg: var(--ok-bg-dark);
+        --ok-border: var(--ok-border-dark);
+        --dup-bg: var(--dup-bg-dark);
+        --dup-border: var(--dup-border-dark);
+        --bad-bg: var(--bad-bg-dark);
+        --bad-border: var(--bad-border-dark);
+        --err-text: var(--err-text-dark);
+        --radius: 14px;
+        accent-color: var(--primary);
       }
-    }
-    @supports (color: light-dark(white, black)) {
-      :root {
-        --bg: light-dark(var(--bg-light), var(--bg-dark));
-        --surface: light-dark(var(--surface-light), var(--surface-dark));
-        --surface-2: light-dark(var(--surface2-light), var(--surface2-dark));
-        --border: light-dark(var(--border-light), var(--border-dark));
-        --text: light-dark(var(--text-light), var(--text-dark));
-        --muted: light-dark(var(--muted-light), var(--muted-dark));
-        --primary: light-dark(var(--primary-light), var(--primary-dark));
-        --primary-hover: light-dark(var(--primary-hover-light), var(--primary-hover-dark));
-        --secondary: light-dark(var(--secondary-light), var(--secondary-dark));
-        --secondary-text: light-dark(var(--secondary-text-light), var(--secondary-text-dark));
-        --badge-bg: light-dark(var(--badge-bg-light), var(--badge-bg-dark));
-        --badge-text: light-dark(var(--badge-text-light), var(--badge-text-dark));
-        --ok-bg: light-dark(var(--ok-bg-light), var(--ok-bg-dark));
-        --ok-border: light-dark(var(--ok-border-light), var(--ok-border-dark));
-        --dup-bg: light-dark(var(--dup-bg-light), var(--dup-bg-dark));
-        --dup-border: light-dark(var(--dup-border-light), var(--dup-border-dark));
-        --bad-bg: light-dark(var(--bad-bg-light), var(--bad-bg-dark));
-        --bad-border: light-dark(var(--bad-border-light), var(--bad-border-dark));
-        --err-text: light-dark(var(--err-text-light), var(--err-text-dark));
-      }
-    }
-    * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      margin: 0;
-      padding: 14px;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.45;
-      -webkit-font-smoothing: antialiased;
-    }
-    .box { max-width: 480px; margin: 0 auto; }
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 18px;
-      margin-bottom: 12px;
-      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
-    }
-    .brand-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    .brand-icon {
-      width: 36px;
-      height: 36px;
-      border-radius: 10px;
-      background: var(--badge-bg);
-      color: var(--badge-text);
-      display: grid;
-      place-items: center;
-      flex-shrink: 0;
-    }
-    .header-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 10px;
-    }
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      background: var(--badge-bg);
-      color: var(--badge-text);
-      font-size: 12px;
-      font-weight: 700;
-      padding: 4px 10px;
-      border-radius: 999px;
-      letter-spacing: 0.3px;
-    }
-    .badge.locked { background: var(--dup-bg); color: var(--dup-border); border: 1px solid var(--dup-border); }
-    .hud-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      font-size: 13px;
-      color: var(--muted);
-      margin-bottom: 10px;
-    }
-    .hud-pill {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      background: var(--surface-2);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 7px 10px;
-      margin-bottom: 12px;
-    }
-    .count-num {
-      font-variant-numeric: tabular-nums;
-      font-size: 15px;
-      color: var(--text);
-    }
-    label {
-      display: block;
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 4px;
-    }
-    .hint {
-      display: block;
-      font-size: 12px;
-      color: var(--muted);
-      margin-bottom: 6px;
-    }
-    select, input, button {
-      width: 100%;
-      min-height: 48px;
-      padding: 11px 13px;
-      font-size: 16px;
-      font-family: inherit;
-      border-radius: 11px;
-      border: 1px solid var(--border);
-      margin-bottom: 10px;
-      transition: border-color 0.15s ease, background-color 0.15s ease;
-    }
-    input, select { background: var(--surface-2); color: var(--text); }
-    input:focus-visible, select:focus-visible, button:focus-visible {
-      outline: 2px solid var(--primary);
-      outline-offset: 2px;
-    }
-    :is(input:user-invalid, input.user-invalid-fallback) {
-      border-color: var(--bad-border);
-      background: var(--bad-bg);
-    }
-    input:user-valid { border-color: var(--ok-border); }
-    .error-msg {
-      display: none;
-      color: var(--err-text);
-      font-size: 12px;
-      margin: -4px 0 10px 0;
-    }
-    :is(input:user-invalid, input.user-invalid-fallback) + .error-msg { display: block; }
-    select:disabled { opacity: 0.65; cursor: not-allowed; }
-    button {
-      background: var(--primary);
-      color: #ffffff;
-      font-weight: 700;
-      border: none;
-      cursor: pointer;
-    }
-    button:hover { background: var(--primary-hover); }
-    button:disabled { opacity: 0.55; cursor: not-allowed; }
-    button.secondary { background: var(--secondary); color: var(--secondary-text); border: 1px solid var(--border); }
-    button.secondary:hover { filter: brightness(0.95); }
-    button.small-btn {
-      width: auto;
-      min-height: 36px;
-      padding: 6px 12px;
-      font-size: 12px;
-      margin-bottom: 0;
-      border-radius: 9px;
-    }
-    .stage-pills {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 6px;
-      margin-bottom: 12px;
-    }
-    .stage-pill {
-      min-height: 44px;
-      padding: 8px 6px;
-      font-size: 13px;
-      font-weight: 700;
-      margin-bottom: 0;
-      border-radius: 10px;
-      background: var(--surface-2);
-      color: var(--muted);
-      border: 1px solid var(--border);
-    }
-    .stage-pill[aria-pressed="true"] {
-      background: var(--primary);
-      color: #ffffff;
-      border-color: var(--primary);
-    }
-    .btn-row { display: flex; gap: 8px; }
-    .btn-row button { flex: 1; }
-    .manual-row { display: flex; gap: 8px; align-items: stretch; }
-    .manual-row input { flex: 1; margin-bottom: 0; }
-    .manual-row button { width: auto; padding: 0 18px; margin-bottom: 0; }
-    #reader {
-      width: 100%;
-      border-radius: 12px;
-      overflow: hidden;
-      background: #000;
-      margin-top: 4px;
-      contain: layout style paint;
-    }
-    .result-banner {
-      display: none;
-      padding: 16px;
-      border-radius: var(--radius);
-      margin-bottom: 12px;
-      text-align: center;
-      contain: layout style paint;
-    }
-    .res-ok { background: var(--ok-bg); border: 2px solid var(--ok-border); }
-    .res-dup { background: var(--dup-bg); border: 2px solid var(--dup-border); }
-    .res-bad { background: var(--bad-bg); border: 2px solid var(--bad-border); }
-    .big-name { font-size: 22px; font-weight: 800; margin: 4px 0; line-height: 1.2; }
-    .sub-info { font-size: 14px; opacity: 0.95; }
-    .error-text { color: var(--err-text); font-size: 13px; min-height: 18px; }
-    .status-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
-    .toggle-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 12px;
-    }
-    .toggle-label {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text);
-      margin-bottom: 0;
-      cursor: pointer;
-    }
-    .toggle-label input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
-      min-height: 18px;
-      margin: 0;
-      padding: 0;
-      accent-color: var(--primary);
-    }
-    .confirm-card {
-      display: none;
-      background: var(--dup-bg);
-      border: 2px solid var(--dup-border);
-      border-radius: var(--radius);
-      padding: 16px;
-      margin-bottom: 12px;
-      text-align: center;
-      contain: layout style paint;
-    }
-    button.confirm-btn { background: #16a34a; color: #fff; }
-    button.confirm-btn:hover { background: #15803d; }
-    button.danger-btn { background: #dc2626; color: #fff; }
-    button.danger-btn:hover { background: #b91c1c; }
-    .visually-hidden:where(:not(:focus-within, :active)) {
-      position: absolute !important;
-      clip-path: inset(50%) !important;
-      overflow: hidden !important;
-      width: 1px !important;
-      height: 1px !important;
-      margin: -1px !important;
-      padding: 0 !important;
-      border: 0 !important;
-      white-space: nowrap !important;
-    }
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after { transition: none !important; animation: none !important; }
-    }
-  </style>
-</head>
-<body>
-<div class="box">
-  <div id="pinScreen" class="card">
-    <div class="brand-row">
-      <div class="brand-icon" aria-hidden="true">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM18 18h3v3h-3zM14 20h2"/></svg>
-      </div>
-      <div>
-        <h2 style="margin:0; font-size:19px;">Usher Scanner Login</h2>
-        <span style="font-size:12px; color:var(--muted);">CvSU CSSO Attendance System</span>
-      </div>
-    </div>
-    <form id="pinForm" onsubmit="unlockScanner(event)">
-      <label for="pinInput">Usher PIN</label>
-      <span id="pin-hint" class="hint">6+ numeric digits provided by your event lead</span>
-      <input id="pinInput" type="password" inputmode="numeric" pattern="[0-9]{6,}" autocomplete="one-time-code" placeholder="Enter 6+ digit PIN" aria-describedby="pin-hint" data-error="pin-format-error" aria-invalid="false" required />
-      <div id="pin-format-error" class="error-msg">Error: Usher PIN must be at least 6 digits.</div>
-
-      <label for="usherNameInput">Usher Name / Gate</label>
-      <span id="usher-hint" class="hint">Optional gate label recorded in Attendance Log</span>
-      <input id="usherNameInput" type="text" maxlength="40" placeholder="e.g., Gate A - Marco" aria-describedby="usher-hint" />
-
-      <button id="unlockBtn" type="submit">Unlock Scanner</button>
-    </form>
-    <div id="pinError" class="error-text" role="status" aria-live="polite"></div>
-  </div>
-
-  <div id="scannerScreen" style="display:none;">
-    <div id="resultBanner" class="result-banner" role="status" aria-live="polite">
-      <div id="resTitle" style="font-size:13px; font-weight:800; letter-spacing:1px;"></div>
-      <div id="resName" class="big-name"></div>
-      <div id="resSub" class="sub-info"></div>
-    </div>
-
-    <div id="confirmCard" class="confirm-card" role="alertdialog" aria-labelledby="confirmTitle" aria-describedby="confirmSub">
-      <div id="confirmTitle" style="font-size:12px; font-weight:800; letter-spacing:1px; text-transform:uppercase;">CHECK PHYSICAL SCHOOL ID</div>
-      <div id="confirmName" class="big-name"></div>
-      <div id="confirmSub" class="sub-info" style="margin-bottom:12px;"></div>
-      <div class="btn-row">
-        <button id="confirmYesBtn" type="button" class="confirm-btn" onclick="confirmPendingScan()">✓ Confirm &amp; Record</button>
-        <button id="confirmNoBtn" type="button" class="danger-btn" onclick="cancelPendingScan()">✕ Cancel / Mismatch</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="header-row">
-        <h2 id="eventTitle" style="margin:0; font-size:18px;">Event Scanner</h2>
-        <button class="secondary small-btn" type="button" onclick="logoutScanner()">Log Out</button>
-      </div>
-      <div class="hud-row">
-        <span>Event: <span id="eventIdBadge" class="badge">DEFAULT</span></span>
-        <span>Accepted: <strong id="scanCount" class="count-num">0</strong></span>
-      </div>
-      <div class="hud-pill">
-        <span id="syncBadge" style="font-size:12px; font-weight:600; color:var(--ok-border);">Sync: Loading snapshot...</span>
-        <button id="syncNowBtn" class="secondary small-btn" type="button" onclick="flushScanQueue(true)">Sync Now</button>
-      </div>
-      <div id="syncAlertNote" class="error-text" style="display:none; margin-bottom:8px;"></div>
-
-      <div class="toggle-row">
-        <label class="toggle-label" for="verifyIdToggle">
-          <input id="verifyIdToggle" type="checkbox" checked />
-          Verify ID First
-        </label>
-        <label class="toggle-label" for="strictOnlineToggle">
-          <input id="strictOnlineToggle" type="checkbox" />
-          Strict Online
-        </label>
-        <button id="refreshRosterBtn" class="secondary small-btn" type="button" onclick="refreshRosterSnapshot()">Refresh Roster</button>
-      </div>
-
-      <label for="stageSelect">
-        Active Checkpoint Stage
-        <span id="stageLockBadge" class="badge locked" style="display:none; margin-left:6px;">LOCKED</span>
-      </label>
-      <div id="stagePills" class="stage-pills" role="group" aria-label="Active Checkpoint Stage">
-        <button type="button" class="stage-pill" data-stage="Check-In" aria-pressed="true" onclick="selectStagePill('Check-In')">Check-In</button>
-        <button type="button" class="stage-pill" data-stage="Mid-Event" aria-pressed="false" onclick="selectStagePill('Mid-Event')">Mid-Event</button>
-        <button type="button" class="stage-pill" data-stage="Check-Out" aria-pressed="false" onclick="selectStagePill('Check-Out')">Check-Out</button>
-      </div>
-      <select id="stageSelect" class="visually-hidden" onchange="syncStagePills()">
-        <option value="Check-In">Check-In</option>
-        <option value="Mid-Event">Mid-Event</option>
-        <option value="Check-Out">Check-Out</option>
-      </select>
-
-      <div id="cameraPickerWrap" style="display:none;">
-        <label for="cameraSelect">Camera</label>
-        <select id="cameraSelect" onchange="switchCamera()"></select>
-      </div>
-
-      <div class="btn-row">
-        <button id="startCamBtn" type="button" onclick="startCamera()">Start Camera</button>
-        <button type="button" class="secondary" onclick="stopCamera()">Pause Camera</button>
-      </div>
-      <div id="reader"></div>
-      <div id="statusNote" class="status-note">Ready. Tap Start Camera to grant permission and scan.</div>
-      <div id="apiVersionNote" class="status-note" style="font-size:11px; opacity:0.8;"></div>
-    </div>
-
-    <div class="card">
-      <label for="manualInput">Manual Check-In by Student ID</label>
-      <span id="manual-hint" class="hint">For cracked screen / dead phone — type Student ID and verify physical School ID</span>
-      <form id="manualForm" class="manual-row" onsubmit="submitManualCode(event)">
-        <input id="manualInput" type="text" placeholder="e.g., 202300328" autocomplete="off" aria-describedby="manual-hint" />
-        <button id="manualSubmit" type="submit">Look Up</button>
-      </form>
-    </div>
-  </div>
-</div>
-
-<script>
-  const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec';
-  const GAS_EXEC_RE = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
-  const IS_LOCAL_HOST = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost';
-  const LOCAL_API_RE = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/[A-Za-z0-9_\/-]+$/;
-  const rawApiParam = (new URLSearchParams(window.location.search).get('api') || '').trim();
-  const isTrustedApi = GAS_EXEC_RE.test(rawApiParam) || (IS_LOCAL_HOST && LOCAL_API_RE.test(rawApiParam));
-  const UNTRUSTED_API_WARNING = Boolean(rawApiParam && !isTrustedApi);
-  const API_URL = isTrustedApi ? rawApiParam : DEFAULT_API_URL;
-  const SESSION_KEY = 'csso_session_token';
-  const LOCAL_SEEN_KEY = 'csso_local_seen_v1';
-  const SCAN_QUEUE_KEY = 'csso_scan_queue_v1';
-  const STAGE_BITS = { 'Check-In': 1, 'Mid-Event': 2, 'Check-Out': 4 };
-  const CAMERA_COOLDOWN_MS = 4000;
-  const FETCH_TIMEOUT_MS = 15000;
-  const KEEP_WARM_INTERVAL_MS = 240000; // 4 minutes (prevents Apps Script V8 cold starts)
-  const SYNC_INTERVAL_MS = 5000; // 5-second background batch sync
-  const SYNC_BATCH_THRESHOLD = 10;
-
-  let html5QrCode = null;
-  let isProcessing = false;
-  let isStarting = false;
-  let sessionToken = '';
-  let activeEventId = 'DEFAULT';
-  let localSeen = {};
-  let scanQueue = [];
-  let isSyncing = false;
-  let snapshotReady = false;
-  let snapshotRoster = {};
-  let snapshotSeen = {};
-  let snapshotEnforceOrder = false;
-  let snapshotV1Retired = false;
-  let snapshotV1CompatEventId = 'DEFAULT';
-  let snapshotLockedStage = 'AUTO';
-  let syncAlerts = 0;
-  let lastCameraPayload = '';
-  let lastCameraTime = 0;
-  let acceptedCount = 0;
-  let audioCtx = null;
-  let keepWarmTimer = null;
-  let syncTimer = null;
-  let pendingConfirm = null;
-
-  function normalizeIdLocal(id) {
-    return String(id || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  }
-
-  function getScanQueueKey() {
-    try {
-      const hash = btoa(unescape(encodeURIComponent(`${API_URL}|${activeEventId}`)))
-        .replace(/[^A-Za-z0-9]/g, '')
-        .slice(-16);
-      return `${SCAN_QUEUE_KEY}_${hash}`;
-    } catch (e) {
-      return SCAN_QUEUE_KEY;
-    }
-  }
-
-  function loadScanQueue() {
-    try {
-      const raw = localStorage.getItem(getScanQueueKey());
-      scanQueue = raw ? JSON.parse(raw) : [];
-      if (!Array.isArray(scanQueue)) scanQueue = [];
-    } catch (e) {
-      scanQueue = [];
-    }
-    updateSyncUI();
-  }
-
-  function saveScanQueue() {
-    try { localStorage.setItem(getScanQueueKey(), JSON.stringify(scanQueue)); } catch (e) {}
-    updateSyncUI();
-  }
-
-  function updateSyncUI() {
-    const badge = document.getElementById('syncBadge');
-    const btn = document.getElementById('syncNowBtn');
-    if (!badge) return;
-    const pending = scanQueue.length;
-    if (isSyncing) {
-      badge.style.color = '#fbbf24';
-      badge.textContent = `Syncing ${pending} scan(s)...`;
-    } else if (pending > 0) {
-      badge.style.color = navigator.onLine === false ? '#94a3b8' : '#fbbf24';
-      badge.textContent = navigator.onLine === false
-        ? `Offline (${pending} queued)`
-        : `Instant Mode • Pending: ${pending}`;
-    } else if (snapshotReady) {
-      badge.style.color = '#34d399';
-      badge.textContent = `Instant Mode • Synced ✓ (${Object.keys(snapshotRoster).length} roster)`;
-    } else {
-      badge.style.color = '#94a3b8';
-      badge.textContent = 'Online Mode (loading snapshot...)';
-    }
-    if (btn) btn.disabled = isSyncing || pending === 0;
-  }
-
-  function applyStageLockUI(lockedStage, eventId) {
-    const badgeEl = document.getElementById('eventIdBadge');
-    if (badgeEl && eventId) badgeEl.textContent = eventId;
-    const stageSelect = document.getElementById('stageSelect');
-    const lockBadge = document.getElementById('stageLockBadge');
-    if (stageSelect && lockBadge) {
-      if (lockedStage && lockedStage !== 'AUTO') {
-        stageSelect.value = lockedStage;
-        stageSelect.disabled = true;
-        lockBadge.style.display = 'inline-block';
-      } else {
-        stageSelect.disabled = false;
-        lockBadge.style.display = 'none';
-      }
-      syncStagePills();
-    }
-  }
-
-  async function loadSnapshot() {
-    if (!sessionToken) return;
-    try {
-      const snap = await apiCall({ action: 'snapshot', sessionToken });
-      if (snap && snap.ok) {
-        const prevEventId = activeEventId;
-        snapshotRoster = snap.roster || {};
-        snapshotSeen = snap.seen || {};
-        snapshotEnforceOrder = !!snap.enforceStageOrder;
-        snapshotV1Retired = !!snap.v1Retired;
-        snapshotV1CompatEventId = snap.v1CompatEventId || 'DEFAULT';
-        snapshotLockedStage = snap.lockedStage || 'AUTO';
-        activeEventId = snap.eventId || activeEventId;
-        if (activeEventId !== prevEventId) {
-          loadScanQueue();
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: var(--bg-light);
+          --surface: var(--surface-light);
+          --surface-2: var(--surface2-light);
+          --border: var(--border-light);
+          --text: var(--text-light);
+          --muted: var(--muted-light);
+          --primary: var(--primary-light);
+          --primary-hover: var(--primary-hover-light);
+          --secondary: var(--secondary-light);
+          --secondary-text: var(--secondary-text-light);
+          --badge-bg: var(--badge-bg-light);
+          --badge-text: var(--badge-text-light);
+          --ok-bg: var(--ok-bg-light);
+          --ok-border: var(--ok-border-light);
+          --dup-bg: var(--dup-bg-light);
+          --dup-border: var(--dup-border-light);
+          --bad-bg: var(--bad-bg-light);
+          --bad-border: var(--bad-border-light);
+          --err-text: var(--err-text-light);
         }
-        snapshotReady = true;
-        applyStageLockUI(snapshotLockedStage, activeEventId);
+      }
+      @supports (color: light-dark(white, black)) {
+        :root {
+          --bg: light-dark(var(--bg-light), var(--bg-dark));
+          --surface: light-dark(var(--surface-light), var(--surface-dark));
+          --surface-2: light-dark(var(--surface2-light), var(--surface2-dark));
+          --border: light-dark(var(--border-light), var(--border-dark));
+          --text: light-dark(var(--text-light), var(--text-dark));
+          --muted: light-dark(var(--muted-light), var(--muted-dark));
+          --primary: light-dark(var(--primary-light), var(--primary-dark));
+          --primary-hover: light-dark(
+            var(--primary-hover-light),
+            var(--primary-hover-dark)
+          );
+          --secondary: light-dark(
+            var(--secondary-light),
+            var(--secondary-dark)
+          );
+          --secondary-text: light-dark(
+            var(--secondary-text-light),
+            var(--secondary-text-dark)
+          );
+          --badge-bg: light-dark(var(--badge-bg-light), var(--badge-bg-dark));
+          --badge-text: light-dark(
+            var(--badge-text-light),
+            var(--badge-text-dark)
+          );
+          --ok-bg: light-dark(var(--ok-bg-light), var(--ok-bg-dark));
+          --ok-border: light-dark(
+            var(--ok-border-light),
+            var(--ok-border-dark)
+          );
+          --dup-bg: light-dark(var(--dup-bg-light), var(--dup-bg-dark));
+          --dup-border: light-dark(
+            var(--dup-border-light),
+            var(--dup-border-dark)
+          );
+          --bad-bg: light-dark(var(--bad-bg-light), var(--bad-bg-dark));
+          --bad-border: light-dark(
+            var(--bad-border-light),
+            var(--bad-border-dark)
+          );
+          --err-text: light-dark(var(--err-text-light), var(--err-text-dark));
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        margin: 0;
+        padding: 14px;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.45;
+        -webkit-font-smoothing: antialiased;
+      }
+      .box {
+        max-width: 480px;
+        margin: 0 auto;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 18px;
+        margin-bottom: 12px;
+        box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
+      }
+      .brand-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+      .brand-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: var(--badge-bg);
+        color: var(--badge-text);
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+      }
+      .header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        background: var(--badge-bg);
+        color: var(--badge-text);
+        font-size: 12px;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 999px;
+        letter-spacing: 0.3px;
+      }
+      .badge.locked {
+        background: var(--dup-bg);
+        color: var(--dup-border);
+        border: 1px solid var(--dup-border);
+      }
+      .hud-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--muted);
+        margin-bottom: 10px;
+      }
+      .hud-pill {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 7px 10px;
+        margin-bottom: 12px;
+      }
+      .count-num {
+        font-variant-numeric: tabular-nums;
+        font-size: 15px;
+        color: var(--text);
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 4px;
+      }
+      .hint {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      select,
+      input,
+      button {
+        width: 100%;
+        min-height: 48px;
+        padding: 11px 13px;
+        font-size: 16px;
+        font-family: inherit;
+        border-radius: 11px;
+        border: 1px solid var(--border);
+        margin-bottom: 10px;
+        transition:
+          border-color 0.15s ease,
+          background-color 0.15s ease;
+      }
+      input,
+      select {
+        background: var(--surface-2);
+        color: var(--text);
+      }
+      input:focus-visible,
+      select:focus-visible,
+      button:focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+      }
+      :is(input:user-invalid, input.user-invalid-fallback) {
+        border-color: var(--bad-border);
+        background: var(--bad-bg);
+      }
+      input:user-valid {
+        border-color: var(--ok-border);
+      }
+      .error-msg {
+        display: none;
+        color: var(--err-text);
+        font-size: 12px;
+        margin: -4px 0 10px 0;
+      }
+      :is(input:user-invalid, input.user-invalid-fallback) + .error-msg {
+        display: block;
+      }
+      select:disabled {
+        opacity: 0.65;
+        cursor: not-allowed;
+      }
+      button {
+        background: var(--primary);
+        color: #ffffff;
+        font-weight: 700;
+        border: none;
+        cursor: pointer;
+      }
+      button:hover {
+        background: var(--primary-hover);
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      button.secondary {
+        background: var(--secondary);
+        color: var(--secondary-text);
+        border: 1px solid var(--border);
+      }
+      button.secondary:hover {
+        filter: brightness(0.95);
+      }
+      button.small-btn {
+        width: auto;
+        min-height: 36px;
+        padding: 6px 12px;
+        font-size: 12px;
+        margin-bottom: 0;
+        border-radius: 9px;
+      }
+      .stage-pills {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        margin-bottom: 12px;
+      }
+      .stage-pill {
+        min-height: 44px;
+        padding: 8px 6px;
+        font-size: 13px;
+        font-weight: 700;
+        margin-bottom: 0;
+        border-radius: 10px;
+        background: var(--surface-2);
+        color: var(--muted);
+        border: 1px solid var(--border);
+      }
+      .stage-pill[aria-pressed="true"] {
+        background: var(--primary);
+        color: #ffffff;
+        border-color: var(--primary);
+      }
+      .btn-row {
+        display: flex;
+        gap: 8px;
+      }
+      .btn-row button {
+        flex: 1;
+      }
+      .manual-row {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+      }
+      .manual-row input {
+        flex: 1;
+        margin-bottom: 0;
+      }
+      .manual-row button {
+        width: auto;
+        padding: 0 18px;
+        margin-bottom: 0;
+      }
+      #reader {
+        width: 100%;
+        border-radius: 12px;
+        overflow: hidden;
+        background: #000;
+        margin-top: 4px;
+        contain: layout style paint;
+      }
+      .result-banner {
+        display: none;
+        padding: 16px;
+        border-radius: var(--radius);
+        margin-bottom: 12px;
+        text-align: center;
+        contain: layout style paint;
+      }
+      .res-ok {
+        background: var(--ok-bg);
+        border: 2px solid var(--ok-border);
+      }
+      .res-dup {
+        background: var(--dup-bg);
+        border: 2px solid var(--dup-border);
+      }
+      .res-bad {
+        background: var(--bad-bg);
+        border: 2px solid var(--bad-border);
+      }
+      .big-name {
+        font-size: 22px;
+        font-weight: 800;
+        margin: 4px 0;
+        line-height: 1.2;
+      }
+      .sub-info {
+        font-size: 14px;
+        opacity: 0.95;
+      }
+      .error-text {
+        color: var(--err-text);
+        font-size: 13px;
+        min-height: 18px;
+      }
+      .status-note {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 8px;
+      }
+      .toggle-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .toggle-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 0;
+        cursor: pointer;
+      }
+      .toggle-label input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        min-height: 18px;
+        margin: 0;
+        padding: 0;
+        accent-color: var(--primary);
+      }
+      .confirm-card {
+        display: none;
+        background: var(--dup-bg);
+        border: 2px solid var(--dup-border);
+        border-radius: var(--radius);
+        padding: 16px;
+        margin-bottom: 12px;
+        text-align: center;
+        contain: layout style paint;
+      }
+      button.confirm-btn {
+        background: #16a34a;
+        color: #fff;
+      }
+      button.confirm-btn:hover {
+        background: #15803d;
+      }
+      button.danger-btn {
+        background: #dc2626;
+        color: #fff;
+      }
+      button.danger-btn:hover {
+        background: #b91c1c;
+      }
+      .visually-hidden:where(:not(:focus-within, :active)) {
+        position: absolute !important;
+        clip-path: inset(50%) !important;
+        overflow: hidden !important;
+        width: 1px !important;
+        height: 1px !important;
+        margin: -1px !important;
+        padding: 0 !important;
+        border: 0 !important;
+        white-space: nowrap !important;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          transition: none !important;
+          animation: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <div id="pinScreen" class="card">
+        <div class="brand-row">
+          <div class="brand-icon" aria-hidden="true">
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="3" width="7" height="7" />
+              <rect x="14" y="3" width="7" height="7" />
+              <rect x="3" y="14" width="7" height="7" />
+              <path d="M14 14h3v3h-3zM18 18h3v3h-3zM14 20h2" />
+            </svg>
+          </div>
+          <div>
+            <h2 style="margin: 0; font-size: 19px">Usher Scanner Login</h2>
+            <span style="font-size: 12px; color: var(--muted)"
+              >CvSU CSSO Attendance System</span
+            >
+          </div>
+        </div>
+        <form id="pinForm" onsubmit="unlockScanner(event)">
+          <label for="pinInput">Usher PIN</label>
+          <span id="pin-hint" class="hint"
+            >6+ numeric digits provided by your event lead</span
+          >
+          <input
+            id="pinInput"
+            type="password"
+            inputmode="numeric"
+            pattern="[0-9]{6,}"
+            autocomplete="one-time-code"
+            placeholder="Enter 6+ digit PIN"
+            aria-describedby="pin-hint"
+            data-error="pin-format-error"
+            aria-invalid="false"
+            required
+          />
+          <div id="pin-format-error" class="error-msg">
+            Error: Usher PIN must be at least 6 digits.
+          </div>
+
+          <label for="usherNameInput">Usher Name / Gate</label>
+          <span id="usher-hint" class="hint"
+            >Optional gate label recorded in Attendance Log</span
+          >
+          <input
+            id="usherNameInput"
+            type="text"
+            maxlength="40"
+            placeholder="e.g., Gate A - Marco"
+            aria-describedby="usher-hint"
+          />
+
+          <button id="unlockBtn" type="submit">Unlock Scanner</button>
+        </form>
+        <div
+          id="pinError"
+          class="error-text"
+          role="status"
+          aria-live="polite"
+        ></div>
+      </div>
+
+      <div id="scannerScreen" style="display: none">
+        <div
+          id="resultBanner"
+          class="result-banner"
+          role="status"
+          aria-live="polite"
+        >
+          <div
+            id="resTitle"
+            style="font-size: 13px; font-weight: 800; letter-spacing: 1px"
+          ></div>
+          <div id="resName" class="big-name"></div>
+          <div id="resSub" class="sub-info"></div>
+        </div>
+
+        <div
+          id="confirmCard"
+          class="confirm-card"
+          role="alertdialog"
+          aria-labelledby="confirmTitle"
+          aria-describedby="confirmSub"
+        >
+          <div
+            id="confirmTitle"
+            style="
+              font-size: 12px;
+              font-weight: 800;
+              letter-spacing: 1px;
+              text-transform: uppercase;
+            "
+          >
+            CHECK PHYSICAL SCHOOL ID
+          </div>
+          <div id="confirmName" class="big-name"></div>
+          <div
+            id="confirmSub"
+            class="sub-info"
+            style="margin-bottom: 12px"
+          ></div>
+          <div class="btn-row">
+            <button
+              id="confirmYesBtn"
+              type="button"
+              class="confirm-btn"
+              onclick="confirmPendingScan()"
+            >
+              ✓ Confirm &amp; Record
+            </button>
+            <button
+              id="confirmNoBtn"
+              type="button"
+              class="danger-btn"
+              onclick="cancelPendingScan()"
+            >
+              ✕ Cancel / Mismatch
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="header-row">
+            <h2 id="eventTitle" style="margin: 0; font-size: 18px">
+              Event Scanner
+            </h2>
+            <button
+              class="secondary small-btn"
+              type="button"
+              onclick="logoutScanner()"
+            >
+              Log Out
+            </button>
+          </div>
+          <div class="hud-row">
+            <span
+              >Event: <span id="eventIdBadge" class="badge">DEFAULT</span></span
+            >
+            <span
+              >Accepted:
+              <strong id="scanCount" class="count-num">0</strong></span
+            >
+          </div>
+          <div class="hud-pill">
+            <span
+              id="syncBadge"
+              style="font-size: 12px; font-weight: 600; color: var(--ok-border)"
+              >Sync: Loading snapshot...</span
+            >
+            <button
+              id="syncNowBtn"
+              class="secondary small-btn"
+              type="button"
+              onclick="flushScanQueue(true)"
+            >
+              Sync Now
+            </button>
+          </div>
+          <div
+            id="syncAlertNote"
+            class="error-text"
+            style="display: none; margin-bottom: 8px"
+          ></div>
+
+          <div class="toggle-row">
+            <label class="toggle-label" for="verifyIdToggle">
+              <input id="verifyIdToggle" type="checkbox" checked />
+              Verify ID First
+            </label>
+            <label class="toggle-label" for="strictOnlineToggle">
+              <input id="strictOnlineToggle" type="checkbox" />
+              Strict Online
+            </label>
+            <button
+              id="refreshRosterBtn"
+              class="secondary small-btn"
+              type="button"
+              onclick="refreshRosterSnapshot()"
+            >
+              Refresh Roster
+            </button>
+          </div>
+
+          <label for="stageSelect">
+            Active Checkpoint Stage
+            <span
+              id="stageLockBadge"
+              class="badge locked"
+              style="display: none; margin-left: 6px"
+              >LOCKED</span
+            >
+          </label>
+          <div
+            id="stagePills"
+            class="stage-pills"
+            role="group"
+            aria-label="Active Checkpoint Stage"
+          >
+            <button
+              type="button"
+              class="stage-pill"
+              data-stage="Check-In"
+              aria-pressed="true"
+              onclick="selectStagePill('Check-In')"
+            >
+              Check-In
+            </button>
+            <button
+              type="button"
+              class="stage-pill"
+              data-stage="Mid-Event"
+              aria-pressed="false"
+              onclick="selectStagePill('Mid-Event')"
+            >
+              Mid-Event
+            </button>
+            <button
+              type="button"
+              class="stage-pill"
+              data-stage="Check-Out"
+              aria-pressed="false"
+              onclick="selectStagePill('Check-Out')"
+            >
+              Check-Out
+            </button>
+          </div>
+          <select
+            id="stageSelect"
+            class="visually-hidden"
+            onchange="syncStagePills()"
+          >
+            <option value="Check-In">Check-In</option>
+            <option value="Mid-Event">Mid-Event</option>
+            <option value="Check-Out">Check-Out</option>
+          </select>
+
+          <div id="cameraPickerWrap" style="display: none">
+            <label for="cameraSelect">Camera</label>
+            <select id="cameraSelect" onchange="switchCamera()"></select>
+          </div>
+
+          <div class="btn-row">
+            <button id="startCamBtn" type="button" onclick="startCamera()">
+              Start Camera
+            </button>
+            <button type="button" class="secondary" onclick="stopCamera()">
+              Pause Camera
+            </button>
+          </div>
+          <div id="reader"></div>
+          <div id="statusNote" class="status-note">
+            Ready. Tap Start Camera to grant permission and scan.
+          </div>
+          <div
+            id="apiVersionNote"
+            class="status-note"
+            style="font-size: 11px; opacity: 0.8"
+          ></div>
+        </div>
+
+        <div class="card">
+          <label for="manualInput">Manual Check-In by Student ID</label>
+          <span id="manual-hint" class="hint"
+            >For cracked screen / dead phone — type Student ID and verify
+            physical School ID</span
+          >
+          <form
+            id="manualForm"
+            class="manual-row"
+            onsubmit="submitManualCode(event)"
+          >
+            <input
+              id="manualInput"
+              type="text"
+              placeholder="e.g., 202300328"
+              autocomplete="off"
+              aria-describedby="manual-hint"
+            />
+            <button id="manualSubmit" type="submit">Look Up</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const DEFAULT_API_URL =
+        (window.CSSO_CONFIG && window.CSSO_CONFIG.DEFAULT_API_URL) ||
+        "https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec";
+      const GAS_EXEC_RE =
+        /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
+      const IS_LOCAL_HOST =
+        window.location.hostname === "127.0.0.1" ||
+        window.location.hostname === "localhost";
+      const LOCAL_API_RE =
+        /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\/[A-Za-z0-9_\/-]+$/;
+      const rawApiParam = (
+        new URLSearchParams(window.location.search).get("api") || ""
+      ).trim();
+      const isTrustedApi =
+        GAS_EXEC_RE.test(rawApiParam) ||
+        (IS_LOCAL_HOST && LOCAL_API_RE.test(rawApiParam));
+      const UNTRUSTED_API_WARNING = Boolean(rawApiParam && !isTrustedApi);
+      const API_URL = isTrustedApi ? rawApiParam : DEFAULT_API_URL;
+      const SESSION_KEY = "csso_session_token";
+      const LOCAL_SEEN_KEY = "csso_local_seen_v1";
+      const SCAN_QUEUE_KEY = "csso_scan_queue_v1";
+      const STAGE_BITS = { "Check-In": 1, "Mid-Event": 2, "Check-Out": 4 };
+      const CAMERA_COOLDOWN_MS = 4000;
+      const FETCH_TIMEOUT_MS = 15000;
+      const KEEP_WARM_INTERVAL_MS = 240000; // 4 minutes (prevents Apps Script V8 cold starts)
+      const SYNC_INTERVAL_MS = 5000; // 5-second background batch sync
+      const SYNC_BATCH_THRESHOLD = 10;
+
+      let html5QrCode = null;
+      let isProcessing = false;
+      let isStarting = false;
+      let sessionToken = "";
+      let activeEventId = "DEFAULT";
+      let localSeen = {};
+      let scanQueue = [];
+      let isSyncing = false;
+      let snapshotReady = false;
+      let snapshotRoster = {};
+      let snapshotSeen = {};
+      let snapshotEnforceOrder = false;
+      let snapshotV1Retired = false;
+      let snapshotV1CompatEventId = "DEFAULT";
+      let snapshotLockedStage = "AUTO";
+      let syncAlerts = 0;
+      let lastCameraPayload = "";
+      let lastCameraTime = 0;
+      let acceptedCount = 0;
+      let audioCtx = null;
+      let keepWarmTimer = null;
+      let syncTimer = null;
+      let pendingConfirm = null;
+
+      function normalizeIdLocal(id) {
+        return String(id || "")
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, "");
+      }
+
+      function getScanQueueKey() {
+        try {
+          const hash = btoa(
+            unescape(encodeURIComponent(`${API_URL}|${activeEventId}`)),
+          )
+            .replace(/[^A-Za-z0-9]/g, "")
+            .slice(-16);
+          return `${SCAN_QUEUE_KEY}_${hash}`;
+        } catch (e) {
+          return SCAN_QUEUE_KEY;
+        }
+      }
+
+      function loadScanQueue() {
+        try {
+          const raw = localStorage.getItem(getScanQueueKey());
+          scanQueue = raw ? JSON.parse(raw) : [];
+          if (!Array.isArray(scanQueue)) scanQueue = [];
+        } catch (e) {
+          scanQueue = [];
+        }
         updateSyncUI();
       }
-    } catch (e) {
-      updateSyncUI();
-    }
-  }
 
-  function startSyncLoop() {
-    if (syncTimer) return;
-    syncTimer = setInterval(() => {
-      if (sessionToken && scanQueue.length > 0 && !isSyncing && navigator.onLine !== false) {
-        flushScanQueue(false);
-      }
-    }, SYNC_INTERVAL_MS);
-  }
-
-  function stopSyncLoop() {
-    if (syncTimer) {
-      clearInterval(syncTimer);
-      syncTimer = null;
-    }
-  }
-
-  async function flushScanQueue(manualTrigger) {
-    const eligible = scanQueue.filter(x => !x.eventId || x.eventId === activeEventId);
-    if (!sessionToken || isSyncing || eligible.length === 0) return;
-    isSyncing = true;
-    updateSyncUI();
-    const batch = eligible.slice(0, 50);
-    const batchIds = new Set(batch.map(x => x.clientId));
-    const wireScans = batch.map(x => ({
-      clientId: x.clientId,
-      payload: x.payload,
-      stage: x.stage,
-      scannedAt: x.scannedAt
-    }));
-    try {
-      const res = await apiCall({ action: 'scanBatch', sessionToken, scans: wireScans });
-      if (res && res.status === 'UNAUTHORIZED') {
-        isSyncing = false;
+      function saveScanQueue() {
+        try {
+          localStorage.setItem(getScanQueueKey(), JSON.stringify(scanQueue));
+        } catch (e) {}
         updateSyncUI();
-        returnToPinScreen(res.message || 'Session expired. Log in again to sync queued scans.');
-        return;
       }
-      if (res && res.ok) {
-        if (res.lockedStage || res.eventId) {
-          snapshotLockedStage = res.lockedStage || snapshotLockedStage;
-          activeEventId = res.eventId || activeEventId;
-          applyStageLockUI(snapshotLockedStage, activeEventId);
+
+      function updateSyncUI() {
+        const badge = document.getElementById("syncBadge");
+        const btn = document.getElementById("syncNowBtn");
+        if (!badge) return;
+        const pending = scanQueue.length;
+        if (isSyncing) {
+          badge.style.color = "#fbbf24";
+          badge.textContent = `Syncing ${pending} scan(s)...`;
+        } else if (pending > 0) {
+          badge.style.color =
+            navigator.onLine === false ? "#94a3b8" : "#fbbf24";
+          badge.textContent =
+            navigator.onLine === false
+              ? `Offline (${pending} queued)`
+              : `Instant Mode • Pending: ${pending}`;
+        } else if (snapshotReady) {
+          badge.style.color = "#34d399";
+          badge.textContent = `Instant Mode • Synced ✓ (${Object.keys(snapshotRoster).length} roster)`;
+        } else {
+          badge.style.color = "#94a3b8";
+          badge.textContent = "Online Mode (loading snapshot...)";
         }
-        scanQueue = scanQueue.filter(x => !batchIds.has(x.clientId));
-        saveScanQueue();
-        if (res.seen) {
-          const merged = Object.assign({}, res.seen);
-          for (const item of scanQueue) {
-            if ((!item.eventId || item.eventId === activeEventId) && item.normId && item.bit) {
-              merged[item.normId] = (merged[item.normId] || 0) | item.bit;
+        if (btn) btn.disabled = isSyncing || pending === 0;
+      }
+
+      function applyStageLockUI(lockedStage, eventId) {
+        const badgeEl = document.getElementById("eventIdBadge");
+        if (badgeEl && eventId) badgeEl.textContent = eventId;
+        const stageSelect = document.getElementById("stageSelect");
+        const lockBadge = document.getElementById("stageLockBadge");
+        if (stageSelect && lockBadge) {
+          if (lockedStage && lockedStage !== "AUTO") {
+            stageSelect.value = lockedStage;
+            stageSelect.disabled = true;
+            lockBadge.style.display = "inline-block";
+          } else {
+            stageSelect.disabled = false;
+            lockBadge.style.display = "none";
+          }
+          syncStagePills();
+        }
+      }
+
+      async function loadSnapshot() {
+        if (!sessionToken) return;
+        try {
+          const snap = await apiCall({ action: "snapshot", sessionToken });
+          if (snap && snap.ok) {
+            const prevEventId = activeEventId;
+            snapshotRoster = snap.roster || {};
+            snapshotSeen = snap.seen || {};
+            snapshotEnforceOrder = !!snap.enforceStageOrder;
+            snapshotV1Retired = !!snap.v1Retired;
+            snapshotV1CompatEventId = snap.v1CompatEventId || "DEFAULT";
+            snapshotLockedStage = snap.lockedStage || "AUTO";
+            activeEventId = snap.eventId || activeEventId;
+            if (activeEventId !== prevEventId) {
+              loadScanQueue();
+            }
+            snapshotReady = true;
+            applyStageLockUI(snapshotLockedStage, activeEventId);
+            updateSyncUI();
+          }
+        } catch (e) {
+          updateSyncUI();
+        }
+      }
+
+      function startSyncLoop() {
+        if (syncTimer) return;
+        syncTimer = setInterval(() => {
+          if (
+            sessionToken &&
+            scanQueue.length > 0 &&
+            !isSyncing &&
+            navigator.onLine !== false
+          ) {
+            flushScanQueue(false);
+          }
+        }, SYNC_INTERVAL_MS);
+      }
+
+      function stopSyncLoop() {
+        if (syncTimer) {
+          clearInterval(syncTimer);
+          syncTimer = null;
+        }
+      }
+
+      async function flushScanQueue(manualTrigger) {
+        const eligible = scanQueue.filter(
+          (x) => !x.eventId || x.eventId === activeEventId,
+        );
+        if (!sessionToken || isSyncing || eligible.length === 0) return;
+        isSyncing = true;
+        updateSyncUI();
+        const batch = eligible.slice(0, 50);
+        const batchIds = new Set(batch.map((x) => x.clientId));
+        const wireScans = batch.map((x) => ({
+          clientId: x.clientId,
+          payload: x.payload,
+          stage: x.stage,
+          scannedAt: x.scannedAt,
+        }));
+        try {
+          const res = await apiCall({
+            action: "scanBatch",
+            sessionToken,
+            scans: wireScans,
+          });
+          if (res && res.status === "UNAUTHORIZED") {
+            isSyncing = false;
+            updateSyncUI();
+            returnToPinScreen(
+              res.message ||
+                "Session expired. Log in again to sync queued scans.",
+            );
+            return;
+          }
+          if (res && res.ok) {
+            if (res.lockedStage || res.eventId) {
+              snapshotLockedStage = res.lockedStage || snapshotLockedStage;
+              activeEventId = res.eventId || activeEventId;
+              applyStageLockUI(snapshotLockedStage, activeEventId);
+            }
+            scanQueue = scanQueue.filter((x) => !batchIds.has(x.clientId));
+            saveScanQueue();
+            if (res.seen) {
+              const merged = Object.assign({}, res.seen);
+              for (const item of scanQueue) {
+                if (
+                  (!item.eventId || item.eventId === activeEventId) &&
+                  item.normId &&
+                  item.bit
+                ) {
+                  merged[item.normId] = (merged[item.normId] || 0) | item.bit;
+                }
+              }
+              snapshotSeen = merged;
+            }
+            const rejected = (res.results || []).filter(
+              (r) => r.status && r.status !== "OK",
+            );
+            if (rejected.length > 0) {
+              playTone("bad");
+              acceptedCount = Math.max(0, acceptedCount - rejected.length);
+              const countEl = document.getElementById("scanCount");
+              if (countEl) countEl.textContent = String(acceptedCount);
+              syncAlerts += rejected.length;
+              const alertEl = document.getElementById("syncAlertNote");
+              if (alertEl) {
+                alertEl.style.display = "block";
+                const last = rejected[rejected.length - 1];
+                alertEl.textContent = `ALERT — Sync rejected (${syncAlerts}): ${last.studentId || "Scan"} -> ${last.status}`;
+              }
             }
           }
-          snapshotSeen = merged;
+        } catch (err) {
+          if (manualTrigger) {
+            const alertEl = document.getElementById("syncAlertNote");
+            if (alertEl) {
+              alertEl.style.display = "block";
+              alertEl.textContent =
+                "Sync delayed (offline/network). Scans remain safely queued.";
+            }
+          }
+        } finally {
+          isSyncing = false;
+          updateSyncUI();
         }
-        const rejected = (res.results || []).filter(r => r.status && r.status !== 'OK');
-        if (rejected.length > 0) {
-          playTone('bad');
-          acceptedCount = Math.max(0, acceptedCount - rejected.length);
-          const countEl = document.getElementById('scanCount');
-          if (countEl) countEl.textContent = String(acceptedCount);
-          syncAlerts += rejected.length;
-          const alertEl = document.getElementById('syncAlertNote');
-          if (alertEl) {
-            alertEl.style.display = 'block';
-            const last = rejected[rejected.length - 1];
-            alertEl.textContent = `ALERT — Sync rejected (${syncAlerts}): ${last.studentId || 'Scan'} -> ${last.status}`;
+      }
+
+      window.addEventListener("online", () => {
+        updateSyncUI();
+        if (sessionToken && scanQueue.length > 0) flushScanQueue(false);
+      });
+      window.addEventListener("offline", () => updateSyncUI());
+
+      function validateScanLocally(payloadText, stage) {
+        if (
+          snapshotLockedStage &&
+          snapshotLockedStage !== "AUTO" &&
+          stage !== snapshotLockedStage
+        ) {
+          return {
+            ok: false,
+            status: "REJECTED_STAGE_LOCKED",
+            message: `Scanner is locked to ${snapshotLockedStage}.`,
+          };
+        }
+        const raw = String(payloadText || "");
+        const parts = raw.split("|");
+        let rawId = "";
+        if (parts[0] === "v2") {
+          if (parts.length !== 4 || !parts[1] || !parts[2] || !parts[3]) {
+            return {
+              ok: false,
+              status: "REJECTED_MALFORMED",
+              message: "Malformed v2 QR payload.",
+            };
+          }
+          if (parts[1] !== activeEventId) {
+            return {
+              ok: false,
+              status: "REJECTED_WRONG_EVENT",
+              message: `Pass belongs to event "${parts[1]}", not "${activeEventId}".`,
+            };
+          }
+          rawId = parts[2];
+        } else {
+          if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+            return {
+              ok: false,
+              status: "REJECTED_MALFORMED",
+              message: "Malformed QR payload.",
+            };
+          }
+          if (snapshotV1Retired) {
+            return {
+              ok: false,
+              status: "REJECTED_V1_RETIRED",
+              message: "Legacy v1 passes have been permanently retired.",
+            };
+          }
+          if (activeEventId !== snapshotV1CompatEventId) {
+            return {
+              ok: false,
+              status: "REJECTED_WRONG_EVENT",
+              message: `Legacy v1 passes are only valid for ${snapshotV1CompatEventId}.`,
+            };
+          }
+          rawId = parts[0].trim().toUpperCase();
+        }
+
+        const normId = normalizeIdLocal(rawId);
+        const tuple = snapshotRoster[normId];
+        if (!tuple) {
+          return { ok: false, fallbackOnline: true }; // Walk-in student not in snapshot -> verify live online
+        }
+        const [studentId, fullName, section] = tuple;
+        const mask = snapshotSeen[normId] || 0;
+        const bit = STAGE_BITS[stage] || 0;
+        if (mask & bit) {
+          return {
+            ok: false,
+            status: "DUPLICATE",
+            studentId,
+            fullName,
+            section,
+            message: `Already scanned for ${stage}.`,
+          };
+        }
+        if (snapshotEnforceOrder) {
+          if (stage === "Mid-Event" && !(mask & STAGE_BITS["Check-In"])) {
+            return {
+              ok: false,
+              status: "REJECTED_STAGE_ORDER",
+              studentId,
+              fullName,
+              message: "Must complete Check-In before Mid-Event.",
+            };
+          }
+          if (stage === "Check-Out" && !(mask & STAGE_BITS["Mid-Event"])) {
+            return {
+              ok: false,
+              status: "REJECTED_STAGE_ORDER",
+              studentId,
+              fullName,
+              message: "Must complete Mid-Event before Check-Out.",
+            };
+          }
+        }
+        return { ok: true, normId, studentId, fullName, section, bit };
+      }
+
+      function loadLocalSeen() {
+        try {
+          const raw = sessionStorage.getItem(LOCAL_SEEN_KEY);
+          localSeen = raw ? JSON.parse(raw) : {};
+        } catch (e) {
+          localSeen = {};
+        }
+      }
+
+      function rememberLocalSeen(eventId, stage, payload, res) {
+        const key = `${eventId}|${stage}|${payload}`;
+        localSeen[key] = {
+          studentId: res.studentId || "",
+          fullName: res.fullName || "",
+          section: res.section || "",
+        };
+        try {
+          sessionStorage.setItem(LOCAL_SEEN_KEY, JSON.stringify(localSeen));
+        } catch (e) {}
+      }
+
+      async function refreshRosterSnapshot() {
+        const btn = document.getElementById("refreshRosterBtn");
+        const origText = btn ? btn.textContent : "Refresh Roster";
+        if (btn) {
+          btn.disabled = true;
+          btn.textContent = "Refreshing...";
+        }
+        try {
+          await loadSnapshot();
+        } finally {
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = origText;
           }
         }
       }
-    } catch (err) {
-      if (manualTrigger) {
-        const alertEl = document.getElementById('syncAlertNote');
-        if (alertEl) {
-          alertEl.style.display = 'block';
-          alertEl.textContent = 'Sync delayed (offline/network). Scans remain safely queued.';
+
+      function startKeepWarm() {
+        if (keepWarmTimer) return;
+        keepWarmTimer = setInterval(async () => {
+          if (!sessionToken || document.hidden || isProcessing) return;
+          try {
+            const ping = await apiCall({ action: "ping" });
+            if (ping && ping.ok && (ping.lockedStage || ping.eventId)) {
+              snapshotLockedStage = ping.lockedStage || snapshotLockedStage;
+              activeEventId = ping.eventId || activeEventId;
+              applyStageLockUI(snapshotLockedStage, activeEventId);
+            }
+          } catch (e) {}
+        }, KEEP_WARM_INTERVAL_MS);
+      }
+
+      function stopKeepWarm() {
+        if (keepWarmTimer) {
+          clearInterval(keepWarmTimer);
+          keepWarmTimer = null;
         }
       }
-    } finally {
-      isSyncing = false;
-      updateSyncUI();
-    }
-  }
 
-  window.addEventListener('online', () => {
-    updateSyncUI();
-    if (sessionToken && scanQueue.length > 0) flushScanQueue(false);
-  });
-  window.addEventListener('offline', () => updateSyncUI());
-
-  function validateScanLocally(payloadText, stage) {
-    if (snapshotLockedStage && snapshotLockedStage !== 'AUTO' && stage !== snapshotLockedStage) {
-      return { ok: false, status: 'REJECTED_STAGE_LOCKED', message: `Scanner is locked to ${snapshotLockedStage}.` };
-    }
-    const raw = String(payloadText || '');
-    const parts = raw.split('|');
-    let rawId = '';
-    if (parts[0] === 'v2') {
-      if (parts.length !== 4 || !parts[1] || !parts[2] || !parts[3]) {
-        return { ok: false, status: 'REJECTED_MALFORMED', message: 'Malformed v2 QR payload.' };
-      }
-      if (parts[1] !== activeEventId) {
-        return { ok: false, status: 'REJECTED_WRONG_EVENT', message: `Pass belongs to event "${parts[1]}", not "${activeEventId}".` };
-      }
-      rawId = parts[2];
-    } else {
-      if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
-        return { ok: false, status: 'REJECTED_MALFORMED', message: 'Malformed QR payload.' };
-      }
-      if (snapshotV1Retired) {
-        return { ok: false, status: 'REJECTED_V1_RETIRED', message: 'Legacy v1 passes have been permanently retired.' };
-      }
-      if (activeEventId !== snapshotV1CompatEventId) {
-        return { ok: false, status: 'REJECTED_WRONG_EVENT', message: `Legacy v1 passes are only valid for ${snapshotV1CompatEventId}.` };
-      }
-      rawId = parts[0].trim().toUpperCase();
-    }
-
-    const normId = normalizeIdLocal(rawId);
-    const tuple = snapshotRoster[normId];
-    if (!tuple) {
-      return { ok: false, fallbackOnline: true }; // Walk-in student not in snapshot -> verify live online
-    }
-    const [studentId, fullName, section] = tuple;
-    const mask = snapshotSeen[normId] || 0;
-    const bit = STAGE_BITS[stage] || 0;
-    if (mask & bit) {
-      return { ok: false, status: 'DUPLICATE', studentId, fullName, section, message: `Already scanned for ${stage}.` };
-    }
-    if (snapshotEnforceOrder) {
-      if (stage === 'Mid-Event' && !(mask & STAGE_BITS['Check-In'])) {
-        return { ok: false, status: 'REJECTED_STAGE_ORDER', studentId, fullName, message: 'Must complete Check-In before Mid-Event.' };
-      }
-      if (stage === 'Check-Out' && !(mask & STAGE_BITS['Mid-Event'])) {
-        return { ok: false, status: 'REJECTED_STAGE_ORDER', studentId, fullName, message: 'Must complete Mid-Event before Check-Out.' };
-      }
-    }
-    return { ok: true, normId, studentId, fullName, section, bit };
-  }
-
-  function loadLocalSeen() {
-    try {
-      const raw = sessionStorage.getItem(LOCAL_SEEN_KEY);
-      localSeen = raw ? JSON.parse(raw) : {};
-    } catch (e) {
-      localSeen = {};
-    }
-  }
-
-  function rememberLocalSeen(eventId, stage, payload, res) {
-    const key = `${eventId}|${stage}|${payload}`;
-    localSeen[key] = {
-      studentId: res.studentId || '',
-      fullName: res.fullName || '',
-      section: res.section || ''
-    };
-    try { sessionStorage.setItem(LOCAL_SEEN_KEY, JSON.stringify(localSeen)); } catch (e) {}
-  }
-
-  async function refreshRosterSnapshot() {
-    const btn = document.getElementById('refreshRosterBtn');
-    const origText = btn ? btn.textContent : 'Refresh Roster';
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = 'Refreshing...';
-    }
-    try {
-      await loadSnapshot();
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.textContent = origText;
-      }
-    }
-  }
-
-  function startKeepWarm() {
-    if (keepWarmTimer) return;
-    keepWarmTimer = setInterval(async () => {
-      if (!sessionToken || document.hidden || isProcessing) return;
-      try {
-        const ping = await apiCall({ action: 'ping' });
-        if (ping && ping.ok && (ping.lockedStage || ping.eventId)) {
-          snapshotLockedStage = ping.lockedStage || snapshotLockedStage;
-          activeEventId = ping.eventId || activeEventId;
-          applyStageLockUI(snapshotLockedStage, activeEventId);
-        }
-      } catch (e) {}
-    }, KEEP_WARM_INTERVAL_MS);
-  }
-
-  function stopKeepWarm() {
-    if (keepWarmTimer) {
-      clearInterval(keepWarmTimer);
-      keepWarmTimer = null;
-    }
-  }
-
-  async function apiCall(body) {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const resp = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify(body),
-        redirect: 'follow',
-        signal: ctrl.signal
-      });
-      if (!resp.ok) {
-        throw new Error('Server HTTP ' + resp.status);
-      }
-      return await resp.json();
-    } catch (err) {
-      if (err && err.name === 'AbortError') {
-        throw new Error('Request timed out after 15s. Check Wi-Fi and try again.');
-      }
-      throw err;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  function playTone(type) {
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      if (!audioCtx) audioCtx = new Ctx();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-
-      const beep = (freq, startOffset, duration) => {
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = freq;
-        gain.gain.value = 0.15;
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        const t = audioCtx.currentTime + startOffset;
-        osc.start(t);
-        osc.stop(t + duration);
-      };
-
-      if (type === 'ok') {
-        beep(880, 0, 0.14);
-        if (navigator.vibrate) navigator.vibrate(80);
-      } else if (type === 'dup') {
-        beep(520, 0, 0.1);
-        beep(520, 0.15, 0.1);
-        if (navigator.vibrate) navigator.vibrate([70, 50, 70]);
-      } else {
-        beep(220, 0, 0.28);
-        if (navigator.vibrate) navigator.vibrate(250);
-      }
-    } catch (e) {}
-  }
-
-  function applyScannerState(res) {
-    startKeepWarm();
-    startSyncLoop();
-    activeEventId = res.eventId || 'DEFAULT';
-    loadLocalSeen();
-    loadScanQueue();
-    loadSnapshot();
-    if (scanQueue.length > 0) flushScanQueue(false);
-    document.getElementById('pinScreen').style.display = 'none';
-    document.getElementById('scannerScreen').style.display = 'block';
-    document.getElementById('eventTitle').textContent = res.eventTitle || 'Event Scanner';
-    applyStageLockUI(res.lockedStage, activeEventId);
-  }
-
-  function syncStagePills() {
-    const sel = document.getElementById('stageSelect');
-    const pills = document.querySelectorAll('#stagePills .stage-pill');
-    pills.forEach(btn => {
-      const active = btn.dataset.stage === sel.value;
-      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-      btn.disabled = sel.disabled;
-    });
-  }
-
-  function selectStagePill(stage) {
-    const sel = document.getElementById('stageSelect');
-    if (sel.disabled) return;
-    sel.value = stage;
-    syncStagePills();
-  }
-
-  function returnToPinScreen(msg) {
-    stopKeepWarm();
-    stopSyncLoop();
-    stopCamera();
-    pendingConfirm = null;
-    const confirmCard = document.getElementById('confirmCard');
-    if (confirmCard) confirmCard.style.display = 'none';
-    sessionToken = '';
-    snapshotReady = false;
-    localSeen = {};
-    try {
-      sessionStorage.removeItem(SESSION_KEY);
-      sessionStorage.removeItem(LOCAL_SEEN_KEY);
-    } catch (e) {}
-    document.getElementById('scannerScreen').style.display = 'none';
-    document.getElementById('pinScreen').style.display = 'block';
-    document.getElementById('pinInput').value = '';
-    document.getElementById('pinError').textContent = msg || '';
-  }
-
-  async function logoutScanner() {
-    if (scanQueue.length > 0) {
-      await flushScanQueue(true);
-      if (scanQueue.length > 0) {
-        const proceed = confirm(`${scanQueue.length} scan(s) are still queued offline and will remain saved on this device until you log back in. Log out anyway?`);
-        if (!proceed) return;
-      }
-    }
-    returnToPinScreen('Logged out.');
-  }
-
-  async function unlockScanner(ev) {
-    if (ev) ev.preventDefault();
-    const pin = document.getElementById('pinInput').value;
-    const usherName = document.getElementById('usherNameInput').value.trim() || 'Usher';
-    const btn = document.getElementById('unlockBtn');
-    const errEl = document.getElementById('pinError');
-
-    errEl.textContent = 'Verifying...';
-    btn.disabled = true;
-
-    try {
-      const res = await apiCall({ action: 'login', pin, usherName });
-      if (res && res.ok) {
-        sessionToken = res.sessionToken;
-        try { sessionStorage.setItem(SESSION_KEY, sessionToken); } catch (e) {}
-        errEl.textContent = '';
-        applyScannerState(res);
-      } else {
-        errEl.textContent = (res && res.message) || 'Login failed.';
-      }
-    } catch (err) {
-      errEl.textContent = (err && err.message) || 'Connection error.';
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  async function startCamera() {
-    if (isStarting) return;
-    isStarting = true;
-    const btn = document.getElementById('startCamBtn');
-    if (btn) btn.disabled = true;
-    const statusEl = document.getElementById('statusNote');
-
-    try {
-      if (typeof Html5Qrcode === 'undefined') {
-        statusEl.textContent = 'Camera library still loading, tap Start Camera again in a second.';
-        return;
-      }
-      if (!html5QrCode) {
-        html5QrCode = new Html5Qrcode('reader');
-      }
-      if (html5QrCode.isScanning) {
-        await stopCamera();
-      }
-
-      statusEl.textContent = 'Requesting camera permission...';
-      const devices = await Html5Qrcode.getCameras();
-      const select = document.getElementById('cameraSelect');
-      const wrap = document.getElementById('cameraPickerWrap');
-
-      let cameraConfig = { facingMode: 'environment' };
-      if (devices && devices.length > 0) {
-        if (select.options.length === 0) {
-          devices.forEach((d, idx) => {
-            const opt = document.createElement('option');
-            opt.value = d.id;
-            opt.textContent = d.label || ('Camera ' + (idx + 1));
-            select.appendChild(opt);
+      async function apiCall(body) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+        try {
+          const resp = await fetch(API_URL, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify(body),
+            redirect: "follow",
+            signal: ctrl.signal,
           });
-          const rear = devices.find(d => /back|rear|environment/i.test(d.label || ''));
-          select.value = rear ? rear.id : devices[0].id;
-          if (devices.length > 1) wrap.style.display = 'block';
+          if (!resp.ok) {
+            throw new Error("Server HTTP " + resp.status);
+          }
+          return await resp.json();
+        } catch (err) {
+          if (err && err.name === "AbortError") {
+            throw new Error(
+              "Request timed out after 15s. Check Wi-Fi and try again.",
+            );
+          }
+          throw err;
+        } finally {
+          clearTimeout(timer);
         }
-        cameraConfig = select.value || devices[0].id;
       }
 
-      if (!sessionToken) return;
-      await html5QrCode.start(
-        cameraConfig,
-        { fps: 10, qrbox: { width: 240, height: 240 } },
-        onScanSuccess,
-        () => {}
-      );
-      if (!sessionToken) {
-        await stopCamera();
-        return;
+      function playTone(type) {
+        try {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          if (!Ctx) return;
+          if (!audioCtx) audioCtx = new Ctx();
+          if (audioCtx.state === "suspended") audioCtx.resume();
+
+          const beep = (freq, startOffset, duration) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = "sine";
+            osc.frequency.value = freq;
+            gain.gain.value = 0.15;
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            const t = audioCtx.currentTime + startOffset;
+            osc.start(t);
+            osc.stop(t + duration);
+          };
+
+          if (type === "ok") {
+            beep(880, 0, 0.14);
+            if (navigator.vibrate) navigator.vibrate(80);
+          } else if (type === "dup") {
+            beep(520, 0, 0.1);
+            beep(520, 0.15, 0.1);
+            if (navigator.vibrate) navigator.vibrate([70, 50, 70]);
+          } else {
+            beep(220, 0, 0.28);
+            if (navigator.vibrate) navigator.vibrate(250);
+          }
+        } catch (e) {}
       }
-      statusEl.textContent = 'Scanning active.';
-    } catch (err) {
-      const msg = String(err && err.message ? err.message : err);
-      if (/NotAllowedError|Permission/i.test(msg)) {
-        statusEl.textContent = 'Camera permission denied. Allow camera in browser site settings or use Manual Pass Code below.';
-      } else {
-        statusEl.textContent = 'Camera error: ' + msg;
+
+      function applyScannerState(res) {
+        startKeepWarm();
+        startSyncLoop();
+        activeEventId = res.eventId || "DEFAULT";
+        loadLocalSeen();
+        loadScanQueue();
+        loadSnapshot();
+        if (scanQueue.length > 0) flushScanQueue(false);
+        document.getElementById("pinScreen").style.display = "none";
+        document.getElementById("scannerScreen").style.display = "block";
+        document.getElementById("eventTitle").textContent =
+          res.eventTitle || "Event Scanner";
+        applyStageLockUI(res.lockedStage, activeEventId);
       }
-    } finally {
-      isStarting = false;
-      if (btn) btn.disabled = false;
-    }
-  }
 
-  async function switchCamera() {
-    if (html5QrCode && html5QrCode.isScanning) {
-      await stopCamera();
-      await startCamera();
-    }
-  }
+      function syncStagePills() {
+        const sel = document.getElementById("stageSelect");
+        const pills = document.querySelectorAll("#stagePills .stage-pill");
+        pills.forEach((btn) => {
+          const active = btn.dataset.stage === sel.value;
+          btn.setAttribute("aria-pressed", active ? "true" : "false");
+          btn.disabled = sel.disabled;
+        });
+      }
 
-  async function stopCamera() {
-    if (html5QrCode && html5QrCode.isScanning) {
-      try {
-        await html5QrCode.stop();
-        document.getElementById('statusNote').textContent = 'Camera paused.';
-      } catch (e) {}
-    }
-  }
+      function selectStagePill(stage) {
+        const sel = document.getElementById("stageSelect");
+        if (sel.disabled) return;
+        sel.value = stage;
+        syncStagePills();
+      }
 
-  function setStatusReady() {
-    isProcessing = false;
-    const statusEl = document.getElementById('statusNote');
-    if (statusEl) {
-      statusEl.textContent = (html5QrCode && html5QrCode.isScanning) ? 'Scanning active.' : 'Ready.';
-    }
-  }
+      function returnToPinScreen(msg) {
+        stopKeepWarm();
+        stopSyncLoop();
+        stopCamera();
+        pendingConfirm = null;
+        const confirmCard = document.getElementById("confirmCard");
+        if (confirmCard) confirmCard.style.display = "none";
+        sessionToken = "";
+        snapshotReady = false;
+        localSeen = {};
+        try {
+          sessionStorage.removeItem(SESSION_KEY);
+          sessionStorage.removeItem(LOCAL_SEEN_KEY);
+        } catch (e) {}
+        document.getElementById("scannerScreen").style.display = "none";
+        document.getElementById("pinScreen").style.display = "block";
+        document.getElementById("pinInput").value = "";
+        document.getElementById("pinError").textContent = msg || "";
+      }
 
-  function showConfirmCard(pending) {
-    pendingConfirm = pending;
-    isProcessing = false;
-    const banner = document.getElementById('resultBanner');
-    if (banner) banner.style.display = 'none';
-    const card = document.getElementById('confirmCard');
-    document.getElementById('confirmTitle').textContent =
-      pending.mode === 'manual' ? 'MANUAL CHECK-IN — VERIFY SCHOOL ID' : 'CHECK PHYSICAL SCHOOL ID';
-    document.getElementById('confirmName').textContent = pending.fullName || pending.studentId;
-    document.getElementById('confirmSub').textContent =
-      `ID: ${pending.studentId} | ${pending.section || 'No Section'} | Stage: ${pending.stage}`;
-    card.style.display = 'block';
-    document.getElementById('statusNote').textContent = 'Check physical School ID, then Confirm or Cancel.';
-  }
+      async function logoutScanner() {
+        if (scanQueue.length > 0) {
+          await flushScanQueue(true);
+          if (scanQueue.length > 0) {
+            const proceed = confirm(
+              `${scanQueue.length} scan(s) are still queued offline and will remain saved on this device until you log back in. Log out anyway?`,
+            );
+            if (!proceed) return;
+          }
+        }
+        returnToPinScreen("Logged out.");
+      }
 
-  function cancelPendingScan() {
-    pendingConfirm = null;
-    lastCameraPayload = '';
-    const card = document.getElementById('confirmCard');
-    if (card) card.style.display = 'none';
-    isProcessing = false;
-    document.getElementById('statusNote').textContent = 'Scan cancelled (School ID not confirmed).';
-  }
+      async function unlockScanner(ev) {
+        if (ev) ev.preventDefault();
+        const pin = document.getElementById("pinInput").value;
+        const usherName =
+          document.getElementById("usherNameInput").value.trim() || "Usher";
+        const btn = document.getElementById("unlockBtn");
+        const errEl = document.getElementById("pinError");
 
-  async function confirmPendingScan() {
-    if (!pendingConfirm || isProcessing) return;
-    isProcessing = true;
-    const pending = pendingConfirm;
-    pendingConfirm = null;
-    const card = document.getElementById('confirmCard');
-    if (card) card.style.display = 'none';
+        errEl.textContent = "Verifying...";
+        btn.disabled = true;
 
-    if (pending.mode === 'queue') {
-      commitQueuedScan(pending.payload, pending.stage, pending.check);
-      setTimeout(setStatusReady, 250);
-    } else if (pending.mode === 'manual') {
-      await executeManualScanOnline(pending.studentId, pending.stage);
-    } else {
-      await executeOnlineScan(pending.payload, pending.stage);
-    }
-  }
+        try {
+          const res = await apiCall({ action: "login", pin, usherName });
+          if (res && res.ok) {
+            sessionToken = res.sessionToken;
+            try {
+              sessionStorage.setItem(SESSION_KEY, sessionToken);
+            } catch (e) {}
+            errEl.textContent = "";
+            applyScannerState(res);
+          } else {
+            errEl.textContent = (res && res.message) || "Login failed.";
+          }
+        } catch (err) {
+          errEl.textContent = (err && err.message) || "Connection error.";
+        } finally {
+          btn.disabled = false;
+        }
+      }
 
-  function commitQueuedScan(payloadText, stage, check) {
-    snapshotSeen[check.normId] = (snapshotSeen[check.normId] || 0) | check.bit;
-    const nowIso = new Date().toISOString();
-    const nowTime = new Date().toTimeString().slice(0, 8);
-    scanQueue.push({
-      clientId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-      payload: payloadText,
-      stage,
-      scannedAt: nowIso,
-      eventId: activeEventId,
-      normId: check.normId,
-      bit: check.bit
-    });
-    saveScanQueue();
-    rememberLocalSeen(activeEventId, stage, payloadText, check);
-    showResult({
-      status: 'OK',
-      studentId: check.studentId,
-      fullName: check.fullName,
-      section: check.section,
-      stage,
-      time: `${nowTime} • queued`
-    });
-    if (scanQueue.length >= SYNC_BATCH_THRESHOLD && !isSyncing) {
-      flushScanQueue(false);
-    }
-  }
+      async function startCamera() {
+        if (isStarting) return;
+        isStarting = true;
+        const btn = document.getElementById("startCamBtn");
+        if (btn) btn.disabled = true;
+        const statusEl = document.getElementById("statusNote");
 
-  async function executeOnlineScan(payloadText, stage) {
-    const statusEl = document.getElementById('statusNote');
-    statusEl.textContent = 'Checking pass...';
-    try {
-      const res = await apiCall({ action: 'scan', sessionToken, payload: payloadText, stage });
-      if (res && res.status === 'UNAUTHORIZED') {
+        try {
+          if (typeof Html5Qrcode === "undefined") {
+            statusEl.textContent =
+              "Camera library still loading, tap Start Camera again in a second.";
+            return;
+          }
+          if (!html5QrCode) {
+            html5QrCode = new Html5Qrcode("reader");
+          }
+          if (html5QrCode.isScanning) {
+            await stopCamera();
+          }
+
+          statusEl.textContent = "Requesting camera permission...";
+          const devices = await Html5Qrcode.getCameras();
+          const select = document.getElementById("cameraSelect");
+          const wrap = document.getElementById("cameraPickerWrap");
+
+          let cameraConfig = { facingMode: "environment" };
+          if (devices && devices.length > 0) {
+            if (select.options.length === 0) {
+              devices.forEach((d, idx) => {
+                const opt = document.createElement("option");
+                opt.value = d.id;
+                opt.textContent = d.label || "Camera " + (idx + 1);
+                select.appendChild(opt);
+              });
+              const rear = devices.find((d) =>
+                /back|rear|environment/i.test(d.label || ""),
+              );
+              select.value = rear ? rear.id : devices[0].id;
+              if (devices.length > 1) wrap.style.display = "block";
+            }
+            cameraConfig = select.value || devices[0].id;
+          }
+
+          if (!sessionToken) return;
+          await html5QrCode.start(
+            cameraConfig,
+            { fps: 10, qrbox: { width: 240, height: 240 } },
+            onScanSuccess,
+            () => {},
+          );
+          if (!sessionToken) {
+            await stopCamera();
+            return;
+          }
+          statusEl.textContent = "Scanning active.";
+        } catch (err) {
+          const msg = String(err && err.message ? err.message : err);
+          if (/NotAllowedError|Permission/i.test(msg)) {
+            statusEl.textContent =
+              "Camera permission denied. Allow camera in browser site settings or use Manual Pass Code below.";
+          } else {
+            statusEl.textContent = "Camera error: " + msg;
+          }
+        } finally {
+          isStarting = false;
+          if (btn) btn.disabled = false;
+        }
+      }
+
+      async function switchCamera() {
+        if (html5QrCode && html5QrCode.isScanning) {
+          await stopCamera();
+          await startCamera();
+        }
+      }
+
+      async function stopCamera() {
+        if (html5QrCode && html5QrCode.isScanning) {
+          try {
+            await html5QrCode.stop();
+            document.getElementById("statusNote").textContent =
+              "Camera paused.";
+          } catch (e) {}
+        }
+      }
+
+      function setStatusReady() {
         isProcessing = false;
-        playTone('bad');
-        returnToPinScreen(res.message || 'Session expired. Please log in again.');
-        return;
+        const statusEl = document.getElementById("statusNote");
+        if (statusEl) {
+          statusEl.textContent =
+            html5QrCode && html5QrCode.isScanning
+              ? "Scanning active."
+              : "Ready.";
+        }
       }
-      if (res && (res.status === 'OK' || res.status === 'DUPLICATE')) {
-        rememberLocalSeen(res.eventId || activeEventId, stage, payloadText, res);
-      }
-      showResult(res || { status: 'ERROR', message: 'Empty server response.' });
-      setTimeout(setStatusReady, 300);
-    } catch (err) {
-      showResult({ status: 'ERROR', message: (err && err.message) || 'Network error.' });
-      setTimeout(setStatusReady, 600);
-    }
-  }
 
-  async function executeManualScanOnline(studentId, stage) {
-    const statusEl = document.getElementById('statusNote');
-    statusEl.textContent = 'Recording manual check-in...';
-    try {
-      const res = await apiCall({ action: 'manualScan', sessionToken, studentId, stage });
-      if (res && res.status === 'UNAUTHORIZED') {
+      function showConfirmCard(pending) {
+        pendingConfirm = pending;
         isProcessing = false;
-        playTone('bad');
-        returnToPinScreen(res.message || 'Session expired. Please log in again.');
-        return;
+        const banner = document.getElementById("resultBanner");
+        if (banner) banner.style.display = "none";
+        const card = document.getElementById("confirmCard");
+        document.getElementById("confirmTitle").textContent =
+          pending.mode === "manual"
+            ? "MANUAL CHECK-IN — VERIFY SCHOOL ID"
+            : "CHECK PHYSICAL SCHOOL ID";
+        document.getElementById("confirmName").textContent =
+          pending.fullName || pending.studentId;
+        document.getElementById("confirmSub").textContent =
+          `ID: ${pending.studentId} | ${pending.section || "No Section"} | Stage: ${pending.stage}`;
+        card.style.display = "block";
+        document.getElementById("statusNote").textContent =
+          "Check physical School ID, then Confirm or Cancel.";
       }
-      if (res && res.status === 'OK' && snapshotReady) {
-        const nid = normalizeIdLocal(res.studentId || studentId);
-        snapshotSeen[nid] = (snapshotSeen[nid] || 0) | (STAGE_BITS[stage] || 0);
+
+      function cancelPendingScan() {
+        pendingConfirm = null;
+        lastCameraPayload = "";
+        const card = document.getElementById("confirmCard");
+        if (card) card.style.display = "none";
+        isProcessing = false;
+        document.getElementById("statusNote").textContent =
+          "Scan cancelled (School ID not confirmed).";
       }
-      showResult(res || { status: 'ERROR', message: 'Empty server response.' });
-      setTimeout(setStatusReady, 300);
-    } catch (err) {
-      showResult({ status: 'ERROR', message: (err && err.message) || 'Network error.' });
-      setTimeout(setStatusReady, 600);
-    }
-  }
 
-  function onScanSuccess(decodedText) {
-    if (pendingConfirm || isProcessing) return;
-    const now = Date.now();
-    if (decodedText === lastCameraPayload && (now - lastCameraTime) < CAMERA_COOLDOWN_MS) {
-      return;
-    }
-    lastCameraPayload = decodedText;
-    lastCameraTime = now;
-    submitScan(decodedText, false);
-  }
+      async function confirmPendingScan() {
+        if (!pendingConfirm || isProcessing) return;
+        isProcessing = true;
+        const pending = pendingConfirm;
+        pendingConfirm = null;
+        const card = document.getElementById("confirmCard");
+        if (card) card.style.display = "none";
 
-  async function submitManualCode(ev) {
-    if (ev) ev.preventDefault();
-    if (pendingConfirm || isProcessing) return;
-    const input = document.getElementById('manualInput');
-    const code = input.value.trim();
-    if (!code) return;
-    input.value = '';
-
-    if (code.includes('|')) {
-      submitScan(code, true);
-      return;
-    }
-
-    const stage = document.getElementById('stageSelect').value;
-    if (snapshotLockedStage && snapshotLockedStage !== 'AUTO' && stage !== snapshotLockedStage) {
-      showResult({ status: 'REJECTED_STAGE_LOCKED', message: `Scanner is locked to ${snapshotLockedStage}.` });
-      return;
-    }
-
-    const verifyFirst = Boolean(document.getElementById('verifyIdToggle') && document.getElementById('verifyIdToggle').checked);
-    const normId = normalizeIdLocal(code);
-    const tuple = snapshotReady ? snapshotRoster[normId] : null;
-    if (tuple) {
-      const [studentId, fullName, section] = tuple;
-      const mask = snapshotSeen[normId] || 0;
-      const bit = STAGE_BITS[stage] || 0;
-      if (mask & bit) {
-        showResult({ status: 'DUPLICATE', studentId, fullName, section, message: `Already scanned for ${stage}.` });
-        return;
+        if (pending.mode === "queue") {
+          commitQueuedScan(pending.payload, pending.stage, pending.check);
+          setTimeout(setStatusReady, 250);
+        } else if (pending.mode === "manual") {
+          await executeManualScanOnline(pending.studentId, pending.stage);
+        } else {
+          await executeOnlineScan(pending.payload, pending.stage);
+        }
       }
-      if (snapshotEnforceOrder) {
-        if (stage === 'Mid-Event' && !(mask & STAGE_BITS['Check-In'])) {
-          showResult({ status: 'REJECTED_STAGE_ORDER', studentId, fullName, message: 'Must complete Check-In before Mid-Event.' });
+
+      function commitQueuedScan(payloadText, stage, check) {
+        snapshotSeen[check.normId] =
+          (snapshotSeen[check.normId] || 0) | check.bit;
+        const nowIso = new Date().toISOString();
+        const nowTime = new Date().toTimeString().slice(0, 8);
+        scanQueue.push({
+          clientId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          payload: payloadText,
+          stage,
+          scannedAt: nowIso,
+          eventId: activeEventId,
+          normId: check.normId,
+          bit: check.bit,
+        });
+        saveScanQueue();
+        rememberLocalSeen(activeEventId, stage, payloadText, check);
+        showResult({
+          status: "OK",
+          studentId: check.studentId,
+          fullName: check.fullName,
+          section: check.section,
+          stage,
+          time: `${nowTime} • queued`,
+        });
+        if (scanQueue.length >= SYNC_BATCH_THRESHOLD && !isSyncing) {
+          flushScanQueue(false);
+        }
+      }
+
+      async function executeOnlineScan(payloadText, stage) {
+        const statusEl = document.getElementById("statusNote");
+        statusEl.textContent = "Checking pass...";
+        try {
+          const res = await apiCall({
+            action: "scan",
+            sessionToken,
+            payload: payloadText,
+            stage,
+          });
+          if (res && res.status === "UNAUTHORIZED") {
+            isProcessing = false;
+            playTone("bad");
+            returnToPinScreen(
+              res.message || "Session expired. Please log in again.",
+            );
+            return;
+          }
+          if (res && (res.status === "OK" || res.status === "DUPLICATE")) {
+            rememberLocalSeen(
+              res.eventId || activeEventId,
+              stage,
+              payloadText,
+              res,
+            );
+          }
+          showResult(
+            res || { status: "ERROR", message: "Empty server response." },
+          );
+          setTimeout(setStatusReady, 300);
+        } catch (err) {
+          showResult({
+            status: "ERROR",
+            message: (err && err.message) || "Network error.",
+          });
+          setTimeout(setStatusReady, 600);
+        }
+      }
+
+      async function executeManualScanOnline(studentId, stage) {
+        const statusEl = document.getElementById("statusNote");
+        statusEl.textContent = "Recording manual check-in...";
+        try {
+          const res = await apiCall({
+            action: "manualScan",
+            sessionToken,
+            studentId,
+            stage,
+          });
+          if (res && res.status === "UNAUTHORIZED") {
+            isProcessing = false;
+            playTone("bad");
+            returnToPinScreen(
+              res.message || "Session expired. Please log in again.",
+            );
+            return;
+          }
+          if (res && res.status === "OK" && snapshotReady) {
+            const nid = normalizeIdLocal(res.studentId || studentId);
+            snapshotSeen[nid] =
+              (snapshotSeen[nid] || 0) | (STAGE_BITS[stage] || 0);
+          }
+          showResult(
+            res || { status: "ERROR", message: "Empty server response." },
+          );
+          setTimeout(setStatusReady, 300);
+        } catch (err) {
+          showResult({
+            status: "ERROR",
+            message: (err && err.message) || "Network error.",
+          });
+          setTimeout(setStatusReady, 600);
+        }
+      }
+
+      function onScanSuccess(decodedText) {
+        if (pendingConfirm || isProcessing) return;
+        const now = Date.now();
+        if (
+          decodedText === lastCameraPayload &&
+          now - lastCameraTime < CAMERA_COOLDOWN_MS
+        ) {
           return;
         }
-        if (stage === 'Check-Out' && !(mask & STAGE_BITS['Mid-Event'])) {
-          showResult({ status: 'REJECTED_STAGE_ORDER', studentId, fullName, message: 'Must complete Mid-Event before Check-Out.' });
+        lastCameraPayload = decodedText;
+        lastCameraTime = now;
+        submitScan(decodedText, false);
+      }
+
+      async function submitManualCode(ev) {
+        if (ev) ev.preventDefault();
+        if (pendingConfirm || isProcessing) return;
+        const input = document.getElementById("manualInput");
+        const code = input.value.trim();
+        if (!code) return;
+        input.value = "";
+
+        if (code.includes("|")) {
+          submitScan(code, true);
           return;
         }
-      }
-      if (verifyFirst) {
-        showConfirmCard({ mode: 'manual', studentId, fullName, section, stage });
-        return;
-      }
-      isProcessing = true;
-      await executeManualScanOnline(studentId, stage);
-      return;
-    }
 
-    if (verifyFirst) {
-      showConfirmCard({
-        mode: 'manual',
-        studentId: code,
-        fullName: 'Manual Check-In: ' + code,
-        section: snapshotReady ? 'Not in local snapshot (server will verify)' : 'Server will verify Roster',
-        stage
-      });
-      return;
-    }
-    isProcessing = true;
-    await executeManualScanOnline(code, stage);
-  }
+        const stage = document.getElementById("stageSelect").value;
+        if (
+          snapshotLockedStage &&
+          snapshotLockedStage !== "AUTO" &&
+          stage !== snapshotLockedStage
+        ) {
+          showResult({
+            status: "REJECTED_STAGE_LOCKED",
+            message: `Scanner is locked to ${snapshotLockedStage}.`,
+          });
+          return;
+        }
 
-  async function submitScan(payloadText, fromManual) {
-    if (pendingConfirm || isProcessing) return;
-    isProcessing = true;
-
-    const stage = document.getElementById('stageSelect').value;
-    const verifyFirst = Boolean(document.getElementById('verifyIdToggle') && document.getElementById('verifyIdToggle').checked);
-    const strictOnline = Boolean(document.getElementById('strictOnlineToggle') && document.getElementById('strictOnlineToggle').checked);
-
-    // Offline-First Batch Mode when snapshot is loaded and Strict Online is OFF
-    if (!strictOnline && snapshotReady) {
-      const check = validateScanLocally(payloadText, stage);
-      if (!check.fallbackOnline) {
-        if (check.ok) {
+        const verifyFirst = Boolean(
+          document.getElementById("verifyIdToggle") &&
+          document.getElementById("verifyIdToggle").checked,
+        );
+        const normId = normalizeIdLocal(code);
+        const tuple = snapshotReady ? snapshotRoster[normId] : null;
+        if (tuple) {
+          const [studentId, fullName, section] = tuple;
+          const mask = snapshotSeen[normId] || 0;
+          const bit = STAGE_BITS[stage] || 0;
+          if (mask & bit) {
+            showResult({
+              status: "DUPLICATE",
+              studentId,
+              fullName,
+              section,
+              message: `Already scanned for ${stage}.`,
+            });
+            return;
+          }
+          if (snapshotEnforceOrder) {
+            if (stage === "Mid-Event" && !(mask & STAGE_BITS["Check-In"])) {
+              showResult({
+                status: "REJECTED_STAGE_ORDER",
+                studentId,
+                fullName,
+                message: "Must complete Check-In before Mid-Event.",
+              });
+              return;
+            }
+            if (stage === "Check-Out" && !(mask & STAGE_BITS["Mid-Event"])) {
+              showResult({
+                status: "REJECTED_STAGE_ORDER",
+                studentId,
+                fullName,
+                message: "Must complete Mid-Event before Check-Out.",
+              });
+              return;
+            }
+          }
           if (verifyFirst) {
             showConfirmCard({
-              mode: 'queue',
+              mode: "manual",
+              studentId,
+              fullName,
+              section,
+              stage,
+            });
+            return;
+          }
+          isProcessing = true;
+          await executeManualScanOnline(studentId, stage);
+          return;
+        }
+
+        if (verifyFirst) {
+          showConfirmCard({
+            mode: "manual",
+            studentId: code,
+            fullName: "Manual Check-In: " + code,
+            section: snapshotReady
+              ? "Not in local snapshot (server will verify)"
+              : "Server will verify Roster",
+            stage,
+          });
+          return;
+        }
+        isProcessing = true;
+        await executeManualScanOnline(code, stage);
+      }
+
+      async function submitScan(payloadText, fromManual) {
+        if (pendingConfirm || isProcessing) return;
+        isProcessing = true;
+
+        const stage = document.getElementById("stageSelect").value;
+        const verifyFirst = Boolean(
+          document.getElementById("verifyIdToggle") &&
+          document.getElementById("verifyIdToggle").checked,
+        );
+        const strictOnline = Boolean(
+          document.getElementById("strictOnlineToggle") &&
+          document.getElementById("strictOnlineToggle").checked,
+        );
+
+        // Offline-First Batch Mode when snapshot is loaded and Strict Online is OFF
+        if (!strictOnline && snapshotReady) {
+          const check = validateScanLocally(payloadText, stage);
+          if (!check.fallbackOnline) {
+            if (check.ok) {
+              if (verifyFirst) {
+                showConfirmCard({
+                  mode: "queue",
+                  payload: payloadText,
+                  studentId: check.studentId,
+                  fullName: check.fullName,
+                  section: check.section,
+                  stage,
+                  check,
+                });
+                return;
+              }
+              commitQueuedScan(payloadText, stage, check);
+              setTimeout(setStatusReady, 250);
+              return;
+            } else {
+              showResult(check);
+              setTimeout(setStatusReady, 250);
+              return;
+            }
+          }
+        } else if (strictOnline && snapshotReady) {
+          const check = validateScanLocally(payloadText, stage);
+          if (!check.fallbackOnline && !check.ok) {
+            showResult(check);
+            setTimeout(setStatusReady, 250);
+            return;
+          }
+          if (verifyFirst && !check.fallbackOnline && check.ok) {
+            showConfirmCard({
+              mode: "online",
               payload: payloadText,
               studentId: check.studentId,
               fullName: check.fullName,
               section: check.section,
               stage,
-              check
             });
             return;
           }
-          commitQueuedScan(payloadText, stage, check);
-          setTimeout(setStatusReady, 250);
-          return;
-        } else {
-          showResult(check);
-          setTimeout(setStatusReady, 250);
+        }
+
+        // Instant (<5ms) O(1) local duplicate short-circuit for online fallback mode
+        const localKey = `${activeEventId}|${stage}|${payloadText}`;
+        if (!fromManual && localSeen[localKey]) {
+          const hit = localSeen[localKey];
+          showResult({
+            status: "DUPLICATE",
+            studentId: hit.studentId,
+            fullName: hit.fullName,
+            section: hit.section,
+            message: `Already scanned for ${stage} (instant local check).`,
+          });
+          setTimeout(setStatusReady, 300);
           return;
         }
+
+        await executeOnlineScan(payloadText, stage);
       }
-    } else if (strictOnline && snapshotReady) {
-      const check = validateScanLocally(payloadText, stage);
-      if (!check.fallbackOnline && !check.ok) {
-        showResult(check);
-        setTimeout(setStatusReady, 250);
-        return;
+
+      function showResult(res) {
+        const banner = document.getElementById("resultBanner");
+        const title = document.getElementById("resTitle");
+        const name = document.getElementById("resName");
+        const sub = document.getElementById("resSub");
+
+        banner.style.display = "block";
+        banner.className = "result-banner";
+
+        if (res.status === "OK") {
+          acceptedCount++;
+          document.getElementById("scanCount").textContent =
+            String(acceptedCount);
+          banner.classList.add("res-ok");
+          title.textContent =
+            "VERIFIED - " + String(res.stage || "").toUpperCase();
+          name.textContent = res.fullName || res.studentId || "Participant";
+          sub.textContent = `ID: ${res.studentId} | ${res.section || "No Section"} | ${res.time}`;
+          playTone("ok");
+        } else if (res.status === "DUPLICATE") {
+          banner.classList.add("res-dup");
+          title.textContent = "ALREADY SCANNED";
+          name.textContent = res.fullName || "Duplicate Scan";
+          sub.textContent = `${res.studentId || ""} - ${res.message || ""}`;
+          playTone("dup");
+        } else {
+          const labels = {
+            REJECTED_FORGED: "FORGED TOKEN",
+            REJECTED_MALFORMED: "MALFORMED QR",
+            REJECTED_NOT_IN_ROSTER: "NOT IN ROSTER",
+            REJECTED_STAGE_LOCKED: "STAGE LOCKED",
+            REJECTED_STAGE_ORDER: "OUT OF ORDER",
+            REJECTED_WRONG_EVENT: "WRONG EVENT",
+            REJECTED_V1_RETIRED: "LEGACY PASS RETIRED",
+            INTERNAL_ERROR: "SERVER ERROR",
+          };
+          banner.classList.add("res-bad");
+          title.textContent = "REJECTED";
+          name.textContent = labels[res.status] || res.status || "ERROR";
+          sub.textContent = res.message || "Invalid QR code.";
+          playTone("bad");
+        }
       }
-      if (verifyFirst && !check.fallbackOnline && check.ok) {
-        showConfirmCard({
-          mode: 'online',
-          payload: payloadText,
-          studentId: check.studentId,
-          fullName: check.fullName,
-          section: check.section,
-          stage
+
+      // Check backend health & auto-restore session on page reload
+      (async function initSession() {
+        if (UNTRUSTED_API_WARNING) {
+          document.getElementById("pinError").textContent =
+            "Ignored untrusted ?api= URL; using default official endpoint.";
+        }
+        try {
+          const ping = await apiCall({ action: "ping" });
+          const note = document.getElementById("apiVersionNote");
+          if (ping && ping.ok && note) {
+            note.textContent = `Backend: ${ping.version || "connected"} (Event: ${ping.eventId || "DEFAULT"})`;
+          }
+        } catch (e) {}
+
+        let saved = "";
+        try {
+          saved = sessionStorage.getItem(SESSION_KEY) || "";
+        } catch (e) {}
+        if (!saved) return;
+        document.getElementById("pinError").textContent =
+          "Restoring session...";
+        try {
+          const res = await apiCall({ action: "state", sessionToken: saved });
+          if (res && res.ok) {
+            sessionToken = saved;
+            document.getElementById("pinError").textContent = "";
+            applyScannerState(res);
+          } else {
+            returnToPinScreen("");
+          }
+        } catch (e) {
+          returnToPinScreen("");
+        }
+      })();
+
+      // Lightweight :user-invalid <-> aria-invalid sync after interaction
+      (function initFieldValidationAria() {
+        const sync = (el) => {
+          if (!el || !el.matches || !el.matches("input, select, textarea"))
+            return;
+          let bad = false;
+          try {
+            bad = el.matches(":user-invalid");
+          } catch (e) {
+            bad = !el.validity.valid;
+          }
+          el.setAttribute("aria-invalid", bad ? "true" : "false");
+          const errId = el.dataset.error;
+          if (errId) {
+            const hintId = el.id === "pinInput" ? "pin-hint" : "";
+            const ids = [];
+            if (hintId) ids.push(hintId);
+            if (bad) ids.push(errId);
+            if (ids.length) el.setAttribute("aria-describedby", ids.join(" "));
+          }
+        };
+        document.addEventListener("blur", (e) => sync(e.target), true);
+        document.addEventListener("input", (e) => {
+          if (e.target && e.target.getAttribute("aria-invalid") === "true")
+            sync(e.target);
         });
-        return;
-      }
-    }
-
-    // Instant (<5ms) O(1) local duplicate short-circuit for online fallback mode
-    const localKey = `${activeEventId}|${stage}|${payloadText}`;
-    if (!fromManual && localSeen[localKey]) {
-      const hit = localSeen[localKey];
-      showResult({
-        status: 'DUPLICATE',
-        studentId: hit.studentId,
-        fullName: hit.fullName,
-        section: hit.section,
-        message: `Already scanned for ${stage} (instant local check).`
-      });
-      setTimeout(setStatusReady, 300);
-      return;
-    }
-
-    await executeOnlineScan(payloadText, stage);
-  }
-
-  function showResult(res) {
-    const banner = document.getElementById('resultBanner');
-    const title = document.getElementById('resTitle');
-    const name = document.getElementById('resName');
-    const sub = document.getElementById('resSub');
-
-    banner.style.display = 'block';
-    banner.className = 'result-banner';
-
-    if (res.status === 'OK') {
-      acceptedCount++;
-      document.getElementById('scanCount').textContent = String(acceptedCount);
-      banner.classList.add('res-ok');
-      title.textContent = 'VERIFIED - ' + String(res.stage || '').toUpperCase();
-      name.textContent = res.fullName || res.studentId || 'Participant';
-      sub.textContent = `ID: ${res.studentId} | ${res.section || 'No Section'} | ${res.time}`;
-      playTone('ok');
-    } else if (res.status === 'DUPLICATE') {
-      banner.classList.add('res-dup');
-      title.textContent = 'ALREADY SCANNED';
-      name.textContent = res.fullName || 'Duplicate Scan';
-      sub.textContent = `${res.studentId || ''} - ${res.message || ''}`;
-      playTone('dup');
-    } else {
-      const labels = {
-        REJECTED_FORGED: 'FORGED TOKEN',
-        REJECTED_MALFORMED: 'MALFORMED QR',
-        REJECTED_NOT_IN_ROSTER: 'NOT IN ROSTER',
-        REJECTED_STAGE_LOCKED: 'STAGE LOCKED',
-        REJECTED_STAGE_ORDER: 'OUT OF ORDER',
-        REJECTED_WRONG_EVENT: 'WRONG EVENT',
-        REJECTED_V1_RETIRED: 'LEGACY PASS RETIRED',
-        INTERNAL_ERROR: 'SERVER ERROR'
-      };
-      banner.classList.add('res-bad');
-      title.textContent = 'REJECTED';
-      name.textContent = labels[res.status] || res.status || 'ERROR';
-      sub.textContent = res.message || 'Invalid QR code.';
-      playTone('bad');
-    }
-  }
-
-  // Check backend health & auto-restore session on page reload
-  (async function initSession() {
-    if (UNTRUSTED_API_WARNING) {
-      document.getElementById('pinError').textContent = 'Ignored untrusted ?api= URL; using default official endpoint.';
-    }
-    try {
-      const ping = await apiCall({ action: 'ping' });
-      const note = document.getElementById('apiVersionNote');
-      if (ping && ping.ok && note) {
-        note.textContent = `Backend: ${ping.version || 'connected'} (Event: ${ping.eventId || 'DEFAULT'})`;
-      }
-    } catch (e) {}
-
-    let saved = '';
-    try { saved = sessionStorage.getItem(SESSION_KEY) || ''; } catch (e) {}
-    if (!saved) return;
-    document.getElementById('pinError').textContent = 'Restoring session...';
-    try {
-      const res = await apiCall({ action: 'state', sessionToken: saved });
-      if (res && res.ok) {
-        sessionToken = saved;
-        document.getElementById('pinError').textContent = '';
-        applyScannerState(res);
-      } else {
-        returnToPinScreen('');
-      }
-    } catch (e) {
-      returnToPinScreen('');
-    }
-  })();
-
-  // Lightweight :user-invalid <-> aria-invalid sync after interaction
-  (function initFieldValidationAria() {
-    const sync = (el) => {
-      if (!el || !el.matches || !el.matches('input, select, textarea')) return;
-      let bad = false;
-      try { bad = el.matches(':user-invalid'); } catch (e) { bad = !el.validity.valid; }
-      el.setAttribute('aria-invalid', bad ? 'true' : 'false');
-      const errId = el.dataset.error;
-      if (errId) {
-        const hintId = el.id === 'pinInput' ? 'pin-hint' : '';
-        const ids = [];
-        if (hintId) ids.push(hintId);
-        if (bad) ids.push(errId);
-        if (ids.length) el.setAttribute('aria-describedby', ids.join(' '));
-      }
-    };
-    document.addEventListener('blur', (e) => sync(e.target), true);
-    document.addEventListener('input', (e) => { if (e.target && e.target.getAttribute('aria-invalid') === 'true') sync(e.target); });
-    document.addEventListener('invalid', (e) => sync(e.target), true);
-  })();
-</script>
-</body>
+        document.addEventListener("invalid", (e) => sync(e.target), true);
+      })();
+    </script>
+  </body>
 </html>
