@@ -586,7 +586,7 @@ function run() {
     ctx.applyAllSystemUpgrades();
     assert.ok(listSheet._data.some(r => r[0] === 'BSDS'), 'applyAllSystemUpgrades must preserve custom List entries');
 
-    // Form submit with 3 dropdowns combines into "BSCS 4-3" in Roster Col D
+    // Form submit with 3 dropdowns + duplicate legacy/new "Section" column (["", "3"]) combines into "BSCS 4-3"
     ctx.onRegistrationFormSubmit({
       namedValues: {
         'Student ID': ['202310088'],
@@ -594,13 +594,19 @@ function run() {
         'Full Name': ['Dropdown Student'],
         'Course / Program': ['BSCS'],
         'Year Level': ['4'],
-        'Section': ['3'],
+        'Section': ['', '3'],
         'Personal Pass PIN': ['5511']
       }
     });
     const added = sheets.get('Roster')._data.find(r => r[0] === '202310088');
     assert.ok(added, 'Dropdown student must be appended to Roster');
     assert.strictEqual(added[3], 'BSCS 4-3');
+
+    // Control characters stripped & length capped in List dropdown options
+    listSheet._data.push(['BSAI\x00\n', '', '']);
+    ctx.onSheetEdit({ range: { getSheet: () => listSheet, getRow: () => listSheet._data.length } });
+    assert.ok(courseItem.getChoiceValues().includes('BSAI'));
+    assert.strictEqual(courseItem.getChoiceValues().some(v => /[\x00-\x1f]/.test(v)), false);
   }
 
   console.log('PASS: form-portal.test.js');
