@@ -12,7 +12,7 @@ const ROSTER_CACHE_TTL_SEC = 300; // 5 minutes
 const DEDUPE_CACHE_TTL_SEC = 3600; // 1 hour (write-through optimization only; Attendance Log is authoritative)
 const EVENT_INDEX_CACHE_PREFIX = "evt_idx_v1_";
 const EMAIL_TIME_BUDGET_MS = 270000; // 4.5 minutes
-const APP_BUILD_VERSION = "2026.11.24-phase4-batch";
+const APP_BUILD_VERSION = "2026.11.24-phase4-hardened";
 
 /**
  * Reads key-value configuration from ScriptProperties (single batched RPC)
@@ -297,8 +297,12 @@ function onOpen() {
     .addItem("Rebuild Verified Attendance", "rebuildVerifiedAttendance")
     .addSeparator()
     .addItem(
-      "📝 Setup Registration Form & Auto-Email Trigger",
+      "📝 Setup Registration Form & Portal Sync",
       "setupRegistrationFormAndTrigger",
+    )
+    .addItem(
+      "🗑️ Replace Registration Form (Trash Old & Create New)",
+      "replaceRegistrationForm",
     )
     .addItem(
       "🧹 Clear All Data Rows (Keep Headers & Config)",
@@ -510,14 +514,26 @@ function rosterShardIdx_(normId) {
   return h % ROSTER_SHARD_COUNT;
 }
 
+function hashEmailForCache_(cleanEmail, cfg) {
+  const email = String(cleanEmail || "")
+    .trim()
+    .toLowerCase();
+  if (!email) return "";
+  return cfg && cfg.SECRET_SALT
+    ? hmacSha256Hex_(email, cfg.SECRET_SALT, 16)
+    : sha256HexPrefix_(email, 16);
+}
+
 /**
- * Rebuilds all 16 compact tuple shards ([studentId, fullName, section]) from Roster
- * in a single sheet read + single CacheService.putAll() RPC. Scales O(1) to ~28,000 students.
+ * Rebuilds all 16 compact tuple shards ([studentId, fullName, section, emailHash]) from Roster
+ * in a single sheet read + single CacheService.putAll() RPC. Scales O(1) to ~22,000+ students.
+ * emailHash is HMAC-keyed and kept strictly server-side (stripped before returning snapshot).
  */
 function rebuildRosterShards_(ss) {
   const rosterSheet = ss.getSheetByName("Roster");
   if (!rosterSheet) return null;
 
+  const cfg = getConfig_();
   const shards = Array.from({ length: ROSTER_SHARD_COUNT }, () => ({}));
   const lastRow = rosterSheet.getLastRow();
   if (lastRow > 1) {
@@ -530,10 +546,14 @@ function rebuildRosterShards_(ss) {
       if (!normId) continue;
       const b = rosterShardIdx_(normId);
       if (shards[b][normId]) continue; // preserve first entry on duplicate normalized ID
+      const cleanEmail = String(rows[i][1] || "")
+        .trim()
+        .toLowerCase();
       shards[b][normId] = [
         rId,
         String(rows[i][2] || "").trim(),
         String(rows[i][3] || "").trim(),
+        cleanEmail ? hashEmailForCache_(cleanEmail, cfg) : "",
       ];
     }
   }
@@ -588,7 +608,12 @@ function getRosterEntry_(ss, normId) {
   if (!tuple) return { missingSheet: false, record: null };
   return {
     missingSheet: false,
-    record: { studentId: tuple[0], fullName: tuple[1], section: tuple[2] },
+    record: {
+      studentId: tuple[0],
+      fullName: tuple[1],
+      section: tuple[2],
+      emailHash: tuple[3] || "",
+    },
   };
 }
 
@@ -1002,17 +1027,20 @@ function getScannerSnapshot(sessionToken) {
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const rosterMap = getRosterMap_(ss, true);
-  if (!rosterMap) {
+  const shards = rebuildRosterShards_(ss);
+  if (!shards) {
     return { ok: false, status: "ERROR", message: "Missing Roster sheet." };
   }
 
   const compactRoster = {};
-  const keys = Object.keys(rosterMap);
-  for (let i = 0; i < keys.length; i++) {
-    const k = keys[i];
-    const rec = rosterMap[k];
-    compactRoster[k] = [rec.studentId, rec.fullName, rec.section];
+  for (let b = 0; b < shards.length; b++) {
+    const bucket = shards[b];
+    const keys = Object.keys(bucket);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      const tuple = bucket[k];
+      compactRoster[k] = [tuple[0], tuple[1], tuple[2]];
+    }
   }
 
   const logSheet = ss.getSheetByName("Attendance Log");
@@ -1055,16 +1083,22 @@ function recordScanBatch(sessionToken, scans) {
   const batch = scans.slice(0, 50);
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const tz = Session.getScriptTimeZone();
+  const serverNowMs = Date.now();
 
   // Pre-validate every scan's syntax, signature, event binding & Roster OUTSIDE ScriptLock
   const prepared = batch.map((item) => {
     const clientId = String((item && item.clientId) || "");
     const payloadStr = String((item && item.payload) || "");
     const cleanStage = String((item && item.stage) || "").trim();
-    let scanTime = new Date();
+    let scanTime = new Date(serverNowMs);
     if (item && item.scannedAt) {
       const parsed = new Date(item.scannedAt);
-      if (!isNaN(parsed.getTime())) scanTime = parsed;
+      if (
+        !isNaN(parsed.getTime()) &&
+        Math.abs(parsed.getTime() - serverNowMs) <= 86400000
+      ) {
+        scanTime = parsed;
+      }
     }
 
     if (!VALID_STAGES.includes(cleanStage)) {
@@ -1499,59 +1533,79 @@ function setupRegistrationFormAndTrigger() {
     }
   }
 
+  const idValidation = FormApp.createTextValidation()
+    .setHelpText(
+      "Enter a valid Student ID (e.g. 202300328). Letters, numbers, and dashes only — no spaces.",
+    )
+    .requireTextMatchesPattern("^[A-Za-z0-9-]+$")
+    .build();
+
+  const nameValidation = FormApp.createTextValidation()
+    .setHelpText(
+      "Enter your full name (e.g. Dela Cruz, Juan M.). Letters, spaces, commas, periods, and hyphens only.",
+    )
+    .requireTextMatchesPattern("^[A-Za-z .,'-]+$")
+    .build();
+
+  const sectionValidation = FormApp.createTextValidation()
+    .setHelpText(
+      "Enter your Course & Section (e.g. BSCS 3-1, BSCS 4-4, or BSCS-3A).",
+    )
+    .requireTextMatchesPattern("^[A-Za-z]{2,10}[ -]?[1-5][ -]?[A-Za-z0-9]{1,3}$")
+    .build();
+
   if (!form) {
     form = FormApp.create(`${cfg.EVENT_TITLE} - Student Registration`);
-    form.setDescription(
-      `Register for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID}).\n` +
-        "All fields are required. You are limited to 1 response. " +
-        "Your signed QR Attendance Pass will be emailed automatically right after submission.",
-    );
-    form.setCollectEmail(true);
-    form.setLimitOneResponsePerUser(true);
-    form.setAllowResponseEdits(false);
-    try {
-      form.setRequireLogin(true);
-    } catch (e) {
-      // setRequireLogin is Workspace-domain specific; ignore on personal accounts
-    }
-
-    const idValidation = FormApp.createTextValidation()
-      .setHelpText(
-        "Enter a valid Student ID (4-20 letters, numbers, or dashes, e.g. 202300328).",
-      )
-      .requireTextMatchesPattern("^[A-Za-z0-9\\-]{4,20}$")
-      .build();
-
-    form
-      .addTextItem()
-      .setTitle("Student ID")
-      .setHelpText("Example: 202300328")
-      .setRequired(true)
-      .setValidation(idValidation);
-
-    form
-      .addTextItem()
-      .setTitle("Full Name")
-      .setHelpText("Example: Dela Cruz, Juan M.")
-      .setRequired(true);
-
-    form
-      .addTextItem()
-      .setTitle("Section")
-      .setHelpText("Example: BSCS 3-1")
-      .setRequired(true);
-
-    form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
-    form.setConfirmationMessage(
-      `Registration received for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID})!\n\n` +
-        "View and download your signed QR Attendance Pass immediately on the Pass Portal " +
-        "(enter your Student ID and the exact email you used here):\n" +
-        "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html\n\n" +
-        "Save a screenshot of your QR pass and bring your physical School ID to the venue.",
-    );
     formId = form.getId();
     props.setProperty("REGISTRATION_FORM_ID", formId);
     createdNew = true;
+  }
+
+  // Always enforce settings, confirmation message & strict field validations (on both new & existing Forms)
+  form.setTitle(`${cfg.EVENT_TITLE} - Student Registration`);
+  form.setDescription(
+    `Register for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID}).\n` +
+      "All fields are required. You are limited to 1 response. " +
+      "After submitting, open the QR Pass Portal link on the next screen to view and download your signed QR Attendance Pass.",
+  );
+  form.setCollectEmail(true);
+  form.setLimitOneResponsePerUser(true);
+  form.setAllowResponseEdits(false);
+  try {
+    form.setRequireLogin(true);
+  } catch (e) {
+    // setRequireLogin is Workspace-domain specific; ignore on personal accounts
+  }
+  form.setConfirmationMessage(
+    `Registration received for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID})!\n\n` +
+      "View and download your signed QR Attendance Pass immediately on the Pass Portal " +
+      "(enter your Student ID and the exact email you used here):\n" +
+      "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html\n\n" +
+      "Save a screenshot of your QR pass and bring your physical School ID to the venue.",
+  );
+
+  const ensureTextQuestion = (title, helpText, validation) => {
+    const existingItem = form
+      .getItems(FormApp.ItemType.TEXT)
+      .find((it) => String(it.getTitle() || "").trim() === title);
+    const textItem = existingItem
+      ? existingItem.asTextItem()
+      : form.addTextItem().setTitle(title);
+    textItem.setHelpText(helpText).setRequired(true);
+    try {
+      textItem.setValidation(validation);
+    } catch (valErr) {
+      console.warn(`Validation skipped for ${title}: ${valErr}`);
+    }
+  };
+
+  ensureTextQuestion("Student ID", "Example: 202300328", idValidation);
+  ensureTextQuestion("Full Name", "Example: Dela Cruz, Juan M.", nameValidation);
+  ensureTextQuestion("Section", "Example: BSCS 3-1", sectionValidation);
+
+  // Link destination AFTER all questions exist so all columns (including Section) are created cleanly
+  if (createdNew) {
+    form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
   }
 
   // Install/replace the onFormSubmit trigger under the currently active user
@@ -1567,8 +1621,6 @@ function setupRegistrationFormAndTrigger() {
 
   const publishedUrl = form.getPublishedUrl();
   const editUrl = form.getEditUrl();
-  const senderEmail = Session.getActiveUser().getEmail() || "(current account)";
-  const dailyQuota = MailApp.getRemainingDailyQuota();
 
   // Save Form URL into Config tab for easy reference
   const configSheet = ss.getSheetByName("Config");
@@ -1582,7 +1634,7 @@ function setupRegistrationFormAndTrigger() {
       }
     }
     if (foundRow > 0) {
-      configSheet.getRange(foundRow, 2).setValue(publishedUrl);
+      configSheet.getRange(foundRow, 2, 1, 2).setValues([[publishedUrl, `Linked Form ID: ${formId}`]]);
     } else {
       configSheet.appendRow([
         "REGISTRATION_FORM_URL",
@@ -1592,23 +1644,88 @@ function setupRegistrationFormAndTrigger() {
     }
   }
 
-  const quotaHint = /@cvsu\.edu\.ph$/i.test(senderEmail)
-    ? "✅ Workspace @cvsu.edu.ph account active (1,500 emails/day tier)."
-    : "ℹ️ Currently running under a personal Gmail account (100 emails/day tier). To use 1,500/day, share this sheet with your @cvsu.edu.ph account and click this menu item while signed in as @cvsu.edu.ph.";
-
   ui.alert(
     createdNew
       ? "Registration Form Created & Linked"
-      : "Auto-Email Trigger Updated",
-    `Auto-QR email trigger is now ACTIVE!\n\n` +
-      `• Trigger Sender: ${senderEmail}\n` +
-      `• Remaining Daily Email Quota: ${dailyQuota}\n` +
-      `• ${quotaHint}\n\n` +
+      : "Form Portal Sync Trigger Updated",
+    `Zero-Email Registration Form & Roster Sync is now ACTIVE!\n\n` +
+      `Students submit this Form -> auto-syncs to Roster -> download their QR Pass on pass.html (unlimited, 0 emails used).\n\n` +
       `Shareable Form URL (saved in Config):\n${publishedUrl}\n\n` +
       `Form Edit URL:\n${editUrl}`,
     ui.ButtonSet.OK,
   );
-  return { ok: true, formId, publishedUrl, editUrl, senderEmail, dailyQuota };
+  return { ok: true, formId, publishedUrl, editUrl };
+}
+
+/**
+ * Unlinks and trashes the previously created Registration Form (and removes its
+ * old Form Responses tab from the spreadsheet), then creates a fresh validated Form.
+ */
+function replaceRegistrationForm() {
+  const ui = SpreadsheetApp.getUi();
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const props = PropertiesService.getScriptProperties();
+  const oldFormId = props.getProperty("REGISTRATION_FORM_ID") || "";
+
+  const resp = ui.alert(
+    "Replace Registration Form?",
+    "This will unlink the old Registration Form, move it to your Google Drive Trash, delete its old 'Form Responses' tab from this spreadsheet, and create a brand-new validated Form.\n\nContinue?",
+    ui.ButtonSet.YES_NO,
+  );
+  if (resp !== ui.Button.YES) {
+    return { ok: false, reason: "CANCELLED" };
+  }
+
+  // Capture any Form-linked response tabs BEFORE unlinking (works in ALL locales: English, Filipino, etc.)
+  const coreTabs = new Set([
+    "Config",
+    "Roster",
+    "Attendance Log",
+    "Verified Attendance",
+  ]);
+  const tabsToDelete = [];
+  const sheetsBefore = ss.getSheets();
+  for (let i = 0; i < sheetsBefore.length; i++) {
+    const s = sheetsBefore[i];
+    const name = s.getName();
+    if (coreTabs.has(name)) continue;
+    const linkedUrl = s.getFormUrl ? s.getFormUrl() : null;
+    const isOrphanRespTab = /^(Form Responses|Mga Tugon sa Form)(\s+\d+)?$/i.test(
+      name,
+    );
+    if (linkedUrl || isOrphanRespTab) {
+      tabsToDelete.push(s);
+    }
+  }
+
+  if (oldFormId) {
+    try {
+      const oldForm = FormApp.openById(oldFormId);
+      try {
+        oldForm.removeDestination();
+      } catch (e) {}
+    } catch (e) {}
+
+    try {
+      DriveApp.getFileById(oldFormId).setTrashed(true);
+    } catch (e) {
+      // Ignore if already trashed or Drive scope not yet granted
+    }
+  }
+
+  // Delete captured Form response tabs now that destination is unlinked
+  for (let i = 0; i < tabsToDelete.length; i++) {
+    try {
+      if (ss.getSheets().length > 1) {
+        ss.deleteSheet(tabsToDelete[i]);
+      }
+    } catch (e) {
+      console.warn("Could not delete old response tab:", e);
+    }
+  }
+
+  props.deleteProperty("REGISTRATION_FORM_ID");
+  return setupRegistrationFormAndTrigger();
 }
 
 /**
@@ -1691,71 +1808,12 @@ function onRegistrationFormSubmit(e) {
       }
     }
 
-    const attemptNum = prevAttempts + 1;
-    let passStatus = "DISPATCHED";
-    let dispatchedAt = "";
-    let lastError = "";
-    let lastSentToken = "";
-    let lastSentId = "";
-
-    const autoEmailSetting = String(cfg.AUTO_EMAIL_ON_SUBMIT || "FALSE")
-      .trim()
-      .toUpperCase();
+    const attemptNum = prevAttempts;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (autoEmailSetting === "FALSE") {
-      passStatus = "READY_ON_PORTAL";
-      lastError = "";
-    } else if (!emailRegex.test(cleanEmail)) {
-      passStatus = "INVALID_EMAIL";
-      lastError = "Invalid email format";
-    } else if (MailApp.getRemainingDailyQuota() <= 0) {
-      passStatus = "READY_ON_PORTAL";
-      lastError = "Email quota reached; pass available on QR Portal";
-    } else {
-      try {
-        const qrBlob = generateQrPngBlob_(payload, `Pass_${studentId}.png`);
-        const subject = `${cfg.EVENT_TITLE} (${issueEventId}) - Your QR Attendance Pass`;
-        const plainBody = [
-          `${cfg.EVENT_TITLE} (${issueEventId})`,
-          `Participant: ${fullName || "Participant"}`,
-          `Student ID: ${studentId}${section ? " | " + section : ""}`,
-          `Manual Pass Code: ${payload}`,
-          "",
-          "Bring your physical School ID. You must be scanned at Check-In, Mid-Event, and Check-Out to qualify.",
-        ].join("\n");
-
-        const htmlBody = `
-          <div style="font-family: Arial, sans-serif; max-width: 420px; margin: 0 auto; border: 1px solid #d0d7de; border-radius: 10px; padding: 20px; text-align: center;">
-            <h2 style="margin: 0 0 8px 0;">${escapeHtml_(cfg.EVENT_TITLE)}</h2>
-            <p style="margin: 0 0 8px 0; font-size: 12px; color: #555;">Event: ${escapeHtml_(issueEventId)}</p>
-            <p style="margin: 4px 0; font-size: 16px;"><strong>${escapeHtml_(fullName || "Participant")}</strong></p>
-            <p style="margin: 4px 0 14px 0; color: #555;">ID: ${escapeHtml_(studentId)}${section ? " | " + escapeHtml_(section) : ""}</p>
-            <img src="cid:qrpass" alt="QR Pass" style="width: 240px; height: 240px;" />
-            <p style="margin: 10px 0 4px 0; font-size: 13px; color: #111;">
-              Manual Pass Code: <code style="background:#f3f4f6; padding:3px 6px; border-radius:4px;">${escapeHtml_(payload)}</code>
-            </p>
-            <p style="margin-top: 10px; font-size: 12px; color: #444; line-height: 1.4;">
-              Save a screenshot of this pass and bring your physical School ID.<br>
-              You must be scanned at <strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong> to qualify.
-            </p>
-          </div>
-        `;
-
-        GmailApp.sendEmail(cleanEmail, subject, plainBody, {
-          htmlBody,
-          inlineImages: { qrpass: qrBlob },
-        });
-        dispatchedAt = new Date().toISOString();
-        lastSentToken = token;
-        lastSentId = studentId;
-      } catch (mailErr) {
-        passStatus = "MAIL_API_ERROR";
-        lastError = String(
-          mailErr && mailErr.message ? mailErr.message : mailErr,
-        ).substring(0, 120);
-      }
-    }
-
+    const passStatus = emailRegex.test(cleanEmail)
+      ? "READY_ON_PORTAL"
+      : "INVALID_EMAIL";
+    const lastError = emailRegex.test(cleanEmail) ? "" : "Invalid email format";
     const rowValues = [
       safeCell_(studentId),
       safeCell_(cleanEmail),
@@ -1764,10 +1822,10 @@ function onRegistrationFormSubmit(e) {
       token,
       passStatus,
       "", // QR Preview preserved
-      lastSentToken,
-      lastSentId,
+      "",
+      "",
       attemptNum,
-      dispatchedAt,
+      "",
       lastError,
       issueProtocol,
       issueEventId,
@@ -1814,8 +1872,21 @@ function lookupStudentPass(studentIdInput, emailInput) {
   }
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const rosterSheet = ss.getSheetByName("Roster");
-  if (!rosterSheet || rosterSheet.getLastRow() <= 1) {
+  const cache = CacheService.getScriptCache();
+  const failKey = `lookup_fail_${normId}`;
+  const currentFails = Number(cache.get(failKey) || "0");
+  if (currentFails >= 15) {
+    Utilities.sleep(1500);
+    return {
+      ok: false,
+      status: "RATE_LIMITED",
+      message:
+        "Too many failed attempts for this ID. Please wait 2 minutes and try again.",
+    };
+  }
+
+  const lookup = getRosterEntry_(ss, normId);
+  if (lookup.missingSheet) {
     Utilities.sleep(1500);
     return {
       ok: false,
@@ -1825,24 +1896,23 @@ function lookupStudentPass(studentIdInput, emailInput) {
     };
   }
 
-  const rows = rosterSheet
-    .getRange(2, 1, rosterSheet.getLastRow() - 1, 4)
-    .getValues();
-  let matched = null;
-  for (let i = 0; i < rows.length; i++) {
-    const rId = String(rows[i][0] || "").trim().toUpperCase();
-    const rEmail = String(rows[i][1] || "").trim().toLowerCase();
-    if (normalizeId_(rId) === normId && rEmail === cleanEmail) {
-      matched = {
-        studentId: rId,
-        fullName: String(rows[i][2] || "").trim(),
-        section: String(rows[i][3] || "").trim(),
-      };
-      break;
-    }
-  }
+  const emailHash = hashEmailForCache_(cleanEmail, cfg);
+  const entry = lookup.record;
+  const matched =
+    entry &&
+    entry.emailHash &&
+    constantTimeEqual_(entry.emailHash, emailHash)
+      ? entry
+      : null;
 
   if (!matched) {
+    const nextFails = currentFails + 1;
+    cache.put(failKey, String(nextFails), 120);
+    if (nextFails >= 10) {
+      console.warn(
+        `High failed lookupPass volume for ${normId} (${nextFails} in 120s window).`,
+      );
+    }
     Utilities.sleep(1500);
     return {
       ok: false,
@@ -1851,6 +1921,10 @@ function lookupStudentPass(studentIdInput, emailInput) {
         "No matching registration found. Verify your Student ID and the exact email you submitted.",
     };
   }
+
+  try {
+    cache.remove(failKey);
+  } catch (e) {}
 
   const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
   const issueProtocol =
@@ -2676,6 +2750,9 @@ function backfillRosterTokens_(ss) {
   const cfg = getConfig_();
   requireSecureConfig_(cfg);
 
+  const compatEventId = cfg.V1_COMPAT_EVENT_ID || "DEFAULT";
+  const useV2 = cfg.V1_COMPAT_RETIRED || cfg.EVENT_ID !== compatEventId;
+
   const count = rosterSheet.getLastRow() - 1;
   const idsAndTokens = rosterSheet.getRange(2, 1, count, 5).getValues();
   const tokenCol = [];
@@ -2686,7 +2763,9 @@ function backfillRosterTokens_(ss) {
       .toUpperCase();
     const existing = String(idsAndTokens[i][4] || "").trim();
     const expected = studentId
-      ? createSignature_(studentId, cfg.SECRET_SALT)
+      ? useV2
+        ? createV2Signature_(cfg.EVENT_ID, studentId, cfg.SECRET_SALT)
+        : createSignature_(studentId, cfg.SECRET_SALT)
       : "";
     if (studentId && existing !== expected) {
       tokenCol.push([expected]);
