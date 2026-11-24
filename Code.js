@@ -1828,15 +1828,6 @@ function setupRegistrationFormAndTrigger() {
       }
     }
   }
-  if (!gasExecRe.test(webAppUrl)) {
-    try {
-      const svcUrl =
-        typeof ScriptApp.getService === "function" && ScriptApp.getService()
-          ? String(ScriptApp.getService().getUrl() || "").trim()
-          : "";
-      if (gasExecRe.test(svcUrl)) webAppUrl = svcUrl;
-    } catch (e) {}
-  }
   let portalUrl = `${portalBase}/pass.html`;
   if (
     gasExecRe.test(webAppUrl) &&
@@ -2855,16 +2846,6 @@ function ensureConfigKeys_(ss) {
   const existingKeys = new Set(rows.map((r) => String(r[0] || "").trim()));
   const defaultPortalBase =
     "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE";
-  const gasExecRe =
-    /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
-  let detectedWebAppUrl = "";
-  try {
-    const svcUrl =
-      typeof ScriptApp.getService === "function" && ScriptApp.getService()
-        ? String(ScriptApp.getService().getUrl() || "").trim()
-        : "";
-    if (gasExecRe.test(svcUrl)) detectedWebAppUrl = svcUrl;
-  } catch (e) {}
 
   const defaults = [
     [
@@ -2890,8 +2871,8 @@ function ensureConfigKeys_(ss) {
     ],
     [
       "WEB_APP_URL",
-      detectedWebAppUrl,
-      "Deployed Apps Script Web App /exec URL embedded as ?api= in the Form confirmation link",
+      "",
+      "Optional: paste your Deploy → Manage deployments Web App /exec URL (leave blank for default production)",
     ],
   ];
   const toAdd = defaults.filter(([k]) => !existingKeys.has(k));
@@ -2899,7 +2880,7 @@ function ensureConfigKeys_(ss) {
     sheet.getRange(sheet.getLastRow() + 1, 1, toAdd.length, 3).setValues(toAdd);
   }
 
-  // Apply dropdown validation to LOCKED_STAGE and auto-fill blank PORTAL_BASE_URL / WEB_APP_URL cells
+  // Apply dropdown validation to LOCKED_STAGE and auto-fill blank PORTAL_BASE_URL cells
   const updatedRows = sheet.getDataRange().getValues();
   const filled = [];
   for (let i = 1; i < updatedRows.length; i++) {
@@ -2917,9 +2898,6 @@ function ensureConfigKeys_(ss) {
     } else if (k === "PORTAL_BASE_URL" && !v) {
       sheet.getRange(i + 1, 2).setValue(defaultPortalBase);
       filled.push("PORTAL_BASE_URL");
-    } else if (k === "WEB_APP_URL" && !v && detectedWebAppUrl) {
-      sheet.getRange(i + 1, 2).setValue(detectedWebAppUrl);
-      filled.push("WEB_APP_URL");
     }
   }
   const parts = [];
