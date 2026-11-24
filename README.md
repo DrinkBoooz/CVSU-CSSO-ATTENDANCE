@@ -62,14 +62,17 @@ Open the bound **Google Spreadsheet** and use the custom **`Attendance Scanner`*
 ## Deploying for Your Own Event (Organizers vs. Forks)
 
 ### Option A: No-Code Organizer Setup (Zero GitHub, Zero IDE)
+
 Event organizers do **not** need GitHub, an IDE, or to read/edit any code:
+
 1. **Make a copy of the template Google Sheet (`/copy`)** — Google automatically copies all 4 tabs (`Config`, `Roster`, `Attendance Log`, `Verified Attendance`) **and** the entire bound Apps Script backend (`Code.js`, `QrEncoder.js`, `Index.html`, `appsscript.json`) into your own Drive with **zero** shared data, secrets, or triggers.
 2. Open **`Config`**, set `USHER_PIN`, `EVENT_TITLE`, and `EVENT_ID`, then click **`Attendance Scanner` $\to$ `🚀 Implement New Features / Apply All Upgrades`**.
 3. Open **Extensions $\to$ Apps Script $\to$ Deploy $\to$ New deployment** (`Web app`, `Execute as: Me`, `Who has access: Anyone`) and copy your `/exec` URL.
 4. Click **`Attendance Scanner` $\to$ `🚀 Implement New Features / Apply All Upgrades`** once more (auto-fills `WEB_APP_URL` in `Config`), then click **`📝 Setup Registration Form & Portal Sync`**.
-   - **Data Isolation Note:** The hosted GitHub Pages frontend (`https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/`) is 100% static HTML/JS with no server or database. When `?api=<YOUR_WEB_APP_URL>` is appended, browsers communicate **directly** with *your* Apps Script and *your* Google Sheet — zero student data ever touches the template author's sheet or account.
+   - **Data Isolation Note:** The hosted GitHub Pages frontend (`https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/`) is 100% static HTML/JS with no server or database. When `?api=<YOUR_WEB_APP_URL>` is appended, browsers communicate **directly** with _your_ Apps Script and _your_ Google Sheet — zero student data ever touches the template author's sheet or account.
 
 ### Option B: Own GitHub Pages URL (Optional Organization Fork)
+
 If you want your own branded domain (`https://<your-username>.github.io/<your-repo>/`) without `?api=` in the URL (see full walkthrough in [docs/FORK_SETUP.md](docs/FORK_SETUP.md)):
 
 1. **Fork this repo** and enable **Settings $\to$ Pages** serving from `main` / `/docs`.
@@ -86,9 +89,10 @@ If you want your own branded domain (`https://<your-username>.github.io/<your-re
 
 ## Developer / IDE Prerequisites (Local Development & Testing)
 
-*Only needed if you are modifying source code locally, running automated tests, or deploying via CLI (not needed for event organizers):*
+_Only needed if you are modifying source code locally, running automated tests, or deploying via CLI (not needed for event organizers):_
 
 ### One-Click Setup
+
 - **Windows (PowerShell)** — auto-checks/installs Git & Node.js LTS via `winget`, runs `npm ci`, installs Playwright Chromium, and runs `npm test`:
   ```powershell
   .\scripts\setup-dev.ps1
@@ -107,9 +111,10 @@ If you want your own branded domain (`https://<your-username>.github.io/<your-re
   ```
 
 ### Manual Setup (Reference)
+
 - **Git** & **Node.js 22+** (includes `npm`)
 - `npm ci` + `npx playwright install chromium` + `npm test`
-- Optional CLI deploys: `npm install -g @google/clasp` + `clasp login` *(update `.clasp.json` with your own `scriptId` before running `clasp push`)*.
+- Optional CLI deploys: `npm install -g @google/clasp` + `clasp login` _(update `.clasp.json` with your own `scriptId` before running `clasp push`)_.
 
 ---
 
