@@ -204,17 +204,19 @@
     .qr-wrap img { width: 240px; height: 240px; display: block; image-rendering: pixelated; }
     .name { font-size: 20px; font-weight: 800; margin: 4px 0; }
     .meta { font-size: 14px; color: var(--muted); margin-bottom: 10px; }
-    .code-box {
-      background: var(--surface-2);
-      border: 1px solid var(--border);
-      border-radius: 9px;
-      padding: 9px 10px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 11px;
-      word-break: break-all;
-      color: var(--text);
-      margin-bottom: 14px;
+    .reset-link {
+      background: transparent;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 13px;
+      text-decoration: underline;
+      border: none;
+      min-height: 36px;
+      padding: 6px 8px;
+      margin-top: 2px;
+      margin-bottom: 4px;
     }
+    .reset-link:hover { background: transparent; color: var(--text); }
     .note { font-size: 12px; color: var(--muted); line-height: 1.45; }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { transition: none !important; animation: none !important; }
@@ -234,8 +236,8 @@
       </div>
     </div>
     <p class="sub">
-      Already submitted the registration Google Form? Enter your <strong>Student ID</strong> and the
-      exact <strong>Email</strong> you used to download your signed QR Attendance Pass immediately.
+      Already submitted the registration Google Form? Enter your <strong>Student ID</strong>,
+      exact <strong>Email</strong>, and <strong>Personal Pass PIN</strong> to save your signed QR Pass on this device.
     </p>
     <form id="lookupForm" onsubmit="fetchPass(event)">
       <label for="studentIdInput">Student ID</label>
@@ -247,6 +249,11 @@
       <span id="email-hint" class="hint">Use the exact email address submitted on the Form</span>
       <input id="emailInput" type="email" placeholder="e.g., name@cvsu.edu.ph" autocomplete="email" aria-describedby="email-hint" data-error="email-error" aria-invalid="false" required />
       <div id="email-error" class="error-msg">Error: Enter a valid email address in the format name@domain.com.</div>
+
+      <label for="pinInput">Personal Pass PIN</label>
+      <span id="pin-hint" class="hint">4–6 digit private PIN you chose on the registration Form</span>
+      <input id="pinInput" type="password" inputmode="numeric" pattern="\s*[0-9]{4,6}\s*" placeholder="4–6 digit Pass PIN" autocomplete="off" aria-describedby="pin-hint" data-error="pin-error" aria-invalid="false" />
+      <div id="pin-error" class="error-msg">Error: Pass PIN must be 4 to 6 numeric digits.</div>
 
       <button id="submitBtn" type="submit">View My QR Pass</button>
     </form>
@@ -261,13 +268,12 @@
     <div class="qr-wrap">
       <img id="qrImg" width="240" height="240" alt="Your Signed QR Attendance Pass" />
     </div>
-    <div id="manualCode" class="code-box"></div>
-    <button id="downloadBtn" type="button" onclick="downloadQr()">Download QR Pass (PNG)</button>
-    <button class="secondary" type="button" onclick="resetForm()">Look Up Another Student</button>
+    <button id="downloadBtn" type="button" onclick="downloadQr()">Download QR Pass Card (PNG)</button>
     <p class="note">
-      Save a screenshot or downloaded PNG of this QR code and bring your <strong>physical School ID</strong>.
-      You must be scanned at <strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong> to qualify.
+      Turn screen brightness up to max and present both this pass and your <strong>physical School ID</strong> to the usher at
+      <strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong>.
     </p>
+    <button class="reset-link" type="button" onclick="resetForm()">Not your pass? Clear saved pass on this device</button>
   </div>
 </div>
 
@@ -280,16 +286,53 @@
     document.getElementById('errorText').textContent = 'Ignored untrusted ?api= URL; using default official endpoint.';
   }
   const FETCH_TIMEOUT_MS = 15000;
+  const SAVED_PASS_KEY = 'csso_saved_pass_v1';
   let currentPass = null;
+
+  function getSavedPassKey() {
+    try {
+      const hash = btoa(unescape(encodeURIComponent(API_URL)))
+        .replace(/[^A-Za-z0-9]/g, '')
+        .slice(-16);
+      return `${SAVED_PASS_KEY}_${hash}`;
+    } catch (e) {
+      return SAVED_PASS_KEY;
+    }
+  }
+
+  function renderPassCard(res) {
+    currentPass = res;
+    document.getElementById('eventBadge').textContent = res.eventId || 'EVENT';
+    document.getElementById('eventTitle').textContent = res.eventTitle || 'Event Attendance Pass';
+    document.getElementById('studentName').textContent = res.fullName || res.studentId;
+    document.getElementById('studentMeta').textContent = `${res.studentId}${res.section ? ' | ' + res.section : ''}`;
+    document.getElementById('qrImg').src = res.qrDataUri;
+    document.getElementById('lookupCard').style.display = 'none';
+    document.getElementById('passCard').style.display = 'block';
+  }
+
+  (function restoreSavedPass() {
+    try {
+      const raw = localStorage.getItem(getSavedPassKey());
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (saved && saved.ok && saved.qrDataUri && saved.studentId) {
+        renderPassCard(saved);
+      }
+    } catch (e) {}
+  })();
 
   async function fetchPass(ev) {
     if (ev) ev.preventDefault();
     const idEl = document.getElementById('studentIdInput');
     const emailEl = document.getElementById('emailInput');
+    const pinEl = document.getElementById('pinInput');
     const studentId = idEl.value.trim();
     const email = emailEl.value.trim();
+    const passPin = pinEl ? pinEl.value.trim() : '';
     idEl.value = studentId;
     emailEl.value = email;
+    if (pinEl) pinEl.value = passPin;
     const btn = document.getElementById('submitBtn');
     const errEl = document.getElementById('errorText');
 
@@ -302,7 +345,7 @@
       const resp = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'lookupPass', studentId, email }),
+        body: JSON.stringify({ action: 'lookupPass', studentId, email, passPin }),
         redirect: 'follow',
         signal: ctrl.signal
       });
@@ -314,17 +357,9 @@
         return;
       }
 
-      currentPass = res;
-      document.getElementById('eventBadge').textContent = res.eventId || 'EVENT';
-      document.getElementById('eventTitle').textContent = res.eventTitle || 'Event Attendance Pass';
-      document.getElementById('studentName').textContent = res.fullName || res.studentId;
-      document.getElementById('studentMeta').textContent = `${res.studentId}${res.section ? ' | ' + res.section : ''}`;
-      document.getElementById('qrImg').src = res.qrDataUri;
-      document.getElementById('manualCode').textContent = res.payload;
       errEl.textContent = '';
-
-      document.getElementById('lookupCard').style.display = 'none';
-      document.getElementById('passCard').style.display = 'block';
+      renderPassCard(res);
+      try { localStorage.setItem(getSavedPassKey(), JSON.stringify(res)); } catch (e) {}
     } catch (err) {
       if (err && err.name === 'AbortError') {
         errEl.textContent = 'Request timed out after 15s. Check Wi-Fi and try again.';
@@ -339,23 +374,91 @@
 
   function downloadQr() {
     if (!currentPass || !currentPass.qrDataUri) return;
-    const a = document.createElement('a');
-    a.href = currentPass.qrDataUri;
-    a.download = `QR_Pass_${currentPass.studentId}_${currentPass.eventId}.png`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const filename = `QR_Pass_${currentPass.studentId}_${currentPass.eventId}.png`;
+    const triggerDownload = (href) => {
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    };
+
+    try {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 640;
+          canvas.height = 860;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) { triggerDownload(currentPass.qrDataUri); return; }
+
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          // Accent header bar
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(0, 0, canvas.width, 130);
+          ctx.fillStyle = '#93c5fd';
+          ctx.font = '700 20px system-ui, -apple-system, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(String(currentPass.eventId || 'EVENT'), 320, 48);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '800 26px system-ui, -apple-system, sans-serif';
+          ctx.fillText(String(currentPass.eventTitle || 'Event Attendance Pass').slice(0, 38), 320, 92);
+
+          // Student identity baked directly into saved image
+          ctx.fillStyle = '#0f172a';
+          ctx.font = '800 32px system-ui, -apple-system, sans-serif';
+          ctx.fillText(String(currentPass.fullName || currentPass.studentId).slice(0, 32), 320, 195);
+          ctx.fillStyle = '#475569';
+          ctx.font = '600 24px system-ui, -apple-system, sans-serif';
+          const meta = `${currentPass.studentId}${currentPass.section ? '  |  ' + currentPass.section : ''}`;
+          ctx.fillText(meta, 320, 236);
+
+          // Crisp QR code + white quiet zone border
+          ctx.strokeStyle = '#cbd5e1';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(75, 266, 490, 490);
+          ctx.imageSmoothingEnabled = false;
+          ctx.drawImage(img, 90, 281, 460, 460);
+
+          // Footer reminder
+          ctx.fillStyle = '#334155';
+          ctx.font = '600 20px system-ui, -apple-system, sans-serif';
+          ctx.fillText('Present with physical School ID', 320, 800);
+          ctx.fillStyle = '#64748b';
+          ctx.font = '500 18px system-ui, -apple-system, sans-serif';
+          ctx.fillText('Check-In  •  Mid-Event  •  Check-Out', 320, 832);
+
+          triggerDownload(canvas.toDataURL('image/png'));
+        } catch (err) {
+          triggerDownload(currentPass.qrDataUri);
+        }
+      };
+      img.onerror = () => triggerDownload(currentPass.qrDataUri);
+      img.src = currentPass.qrDataUri;
+    } catch (e) {
+      triggerDownload(currentPass.qrDataUri);
+    }
   }
 
   function resetForm() {
     currentPass = null;
+    try { localStorage.removeItem(getSavedPassKey()); } catch (e) {}
     const form = document.getElementById('lookupForm');
     if (form) form.reset();
-    ['studentIdInput', 'emailInput'].forEach(id => {
+    const hintMap = {
+      studentIdInput: 'id-hint',
+      emailInput: 'email-hint',
+      pinInput: 'pin-hint'
+    };
+    Object.keys(hintMap).forEach(id => {
       const el = document.getElementById(id);
       if (!el) return;
       el.setAttribute('aria-invalid', 'false');
-      el.setAttribute('aria-describedby', id === 'studentIdInput' ? 'id-hint' : 'email-hint');
+      el.setAttribute('aria-describedby', hintMap[id]);
     });
     document.getElementById('passCard').style.display = 'none';
     document.getElementById('lookupCard').style.display = 'block';
@@ -369,7 +472,8 @@
       let bad = false;
       try { bad = el.matches(':user-invalid'); } catch (e) { bad = !el.validity.valid; }
       el.setAttribute('aria-invalid', bad ? 'true' : 'false');
-      const hintId = el.id === 'studentIdInput' ? 'id-hint' : (el.id === 'emailInput' ? 'email-hint' : '');
+      const hintMap = { studentIdInput: 'id-hint', emailInput: 'email-hint', pinInput: 'pin-hint' };
+      const hintId = hintMap[el.id] || '';
       const errId = el.dataset.error;
       const ids = [];
       if (hintId) ids.push(hintId);
@@ -377,7 +481,7 @@
       if (ids.length) el.setAttribute('aria-describedby', ids.join(' '));
     };
     document.addEventListener('blur', (e) => {
-      if (e.target && e.target.id === 'studentIdInput' && typeof e.target.value === 'string') {
+      if (e.target && (e.target.id === 'studentIdInput' || e.target.id === 'pinInput') && typeof e.target.value === 'string') {
         e.target.value = e.target.value.trim();
       }
       sync(e.target);
