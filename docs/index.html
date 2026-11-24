@@ -3,25 +3,156 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src https://script.google.com https://script.googleusercontent.com; media-src 'self' blob:; base-uri 'self'; form-action 'self';" />
   <title>CvSU CSSO Usher QR Scanner</title>
+  <link rel="preconnect" href="https://script.google.com" crossorigin />
+  <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin />
   <script src="./vendor/html5-qrcode.min.js" defer></script>
   <style>
+    :root {
+      color-scheme: dark light;
+      --bg-light: #f1f5f9;
+      --bg-dark: #090d16;
+      --surface-light: #ffffff;
+      --surface-dark: #111827;
+      --surface2-light: #f8fafc;
+      --surface2-dark: #0b1120;
+      --border-light: #cbd5e1;
+      --border-dark: #263248;
+      --text-light: #0f172a;
+      --text-dark: #f8fafc;
+      --muted-light: #475569;
+      --muted-dark: #94a3b8;
+      --primary-light: #1d4ed8;
+      --primary-dark: #3b82f6;
+      --primary-hover-light: #1e40af;
+      --primary-hover-dark: #2563eb;
+      --secondary-light: #e2e8f0;
+      --secondary-dark: #1e293b;
+      --secondary-text-light: #0f172a;
+      --secondary-text-dark: #e2e8f0;
+      --badge-bg-light: #dbeafe;
+      --badge-bg-dark: #1e3a8a;
+      --badge-text-light: #1e40af;
+      --badge-text-dark: #dbeafe;
+      --ok-bg-light: #ecfdf5;
+      --ok-bg-dark: #064e3b;
+      --ok-border-light: #059669;
+      --ok-border-dark: #34d399;
+      --dup-bg-light: #fffbeb;
+      --dup-bg-dark: #78350f;
+      --dup-border-light: #d97706;
+      --dup-border-dark: #fbbf24;
+      --bad-bg-light: #fef2f2;
+      --bad-bg-dark: #7f1d1d;
+      --bad-border-light: #dc2626;
+      --bad-border-dark: #f87171;
+      --err-text-light: #b91c1c;
+      --err-text-dark: #fca5a5;
+
+      --bg: var(--bg-dark);
+      --surface: var(--surface-dark);
+      --surface-2: var(--surface2-dark);
+      --border: var(--border-dark);
+      --text: var(--text-dark);
+      --muted: var(--muted-dark);
+      --primary: var(--primary-dark);
+      --primary-hover: var(--primary-hover-dark);
+      --secondary: var(--secondary-dark);
+      --secondary-text: var(--secondary-text-dark);
+      --badge-bg: var(--badge-bg-dark);
+      --badge-text: var(--badge-text-dark);
+      --ok-bg: var(--ok-bg-dark);
+      --ok-border: var(--ok-border-dark);
+      --dup-bg: var(--dup-bg-dark);
+      --dup-border: var(--dup-border-dark);
+      --bad-bg: var(--bad-bg-dark);
+      --bad-border: var(--bad-border-dark);
+      --err-text: var(--err-text-dark);
+      --radius: 14px;
+      accent-color: var(--primary);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: var(--bg-light);
+        --surface: var(--surface-light);
+        --surface-2: var(--surface2-light);
+        --border: var(--border-light);
+        --text: var(--text-light);
+        --muted: var(--muted-light);
+        --primary: var(--primary-light);
+        --primary-hover: var(--primary-hover-light);
+        --secondary: var(--secondary-light);
+        --secondary-text: var(--secondary-text-light);
+        --badge-bg: var(--badge-bg-light);
+        --badge-text: var(--badge-text-light);
+        --ok-bg: var(--ok-bg-light);
+        --ok-border: var(--ok-border-light);
+        --dup-bg: var(--dup-bg-light);
+        --dup-border: var(--dup-border-light);
+        --bad-bg: var(--bad-bg-light);
+        --bad-border: var(--bad-border-light);
+        --err-text: var(--err-text-light);
+      }
+    }
+    @supports (color: light-dark(white, black)) {
+      :root {
+        --bg: light-dark(var(--bg-light), var(--bg-dark));
+        --surface: light-dark(var(--surface-light), var(--surface-dark));
+        --surface-2: light-dark(var(--surface2-light), var(--surface2-dark));
+        --border: light-dark(var(--border-light), var(--border-dark));
+        --text: light-dark(var(--text-light), var(--text-dark));
+        --muted: light-dark(var(--muted-light), var(--muted-dark));
+        --primary: light-dark(var(--primary-light), var(--primary-dark));
+        --primary-hover: light-dark(var(--primary-hover-light), var(--primary-hover-dark));
+        --secondary: light-dark(var(--secondary-light), var(--secondary-dark));
+        --secondary-text: light-dark(var(--secondary-text-light), var(--secondary-text-dark));
+        --badge-bg: light-dark(var(--badge-bg-light), var(--badge-bg-dark));
+        --badge-text: light-dark(var(--badge-text-light), var(--badge-text-dark));
+        --ok-bg: light-dark(var(--ok-bg-light), var(--ok-bg-dark));
+        --ok-border: light-dark(var(--ok-border-light), var(--ok-border-dark));
+        --dup-bg: light-dark(var(--dup-bg-light), var(--dup-bg-dark));
+        --dup-border: light-dark(var(--dup-border-light), var(--dup-border-dark));
+        --bad-bg: light-dark(var(--bad-bg-light), var(--bad-bg-dark));
+        --bad-border: light-dark(var(--bad-border-light), var(--bad-border-dark));
+        --err-text: light-dark(var(--err-text-light), var(--err-text-dark));
+      }
+    }
     * { box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       margin: 0;
-      padding: 16px;
-      background: #0f172a;
-      color: #f8fafc;
+      padding: 14px;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      -webkit-font-smoothing: antialiased;
     }
     .box { max-width: 480px; margin: 0 auto; }
     .card {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
       padding: 18px;
+      margin-bottom: 12px;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       margin-bottom: 14px;
+    }
+    .brand-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--badge-bg);
+      color: var(--badge-text);
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
     }
     .header-row {
       display: flex;
@@ -31,116 +162,214 @@
       margin-bottom: 10px;
     }
     .badge {
-      display: inline-block;
-      background: #1d4ed8;
-      color: #dbeafe;
+      display: inline-flex;
+      align-items: center;
+      background: var(--badge-bg);
+      color: var(--badge-text);
       font-size: 12px;
       font-weight: 700;
       padding: 4px 10px;
       border-radius: 999px;
-      letter-spacing: 0.4px;
+      letter-spacing: 0.3px;
     }
-    .badge.locked { background: #92400e; color: #fef3c7; }
-    .meta-row {
+    .badge.locked { background: var(--dup-bg); color: var(--dup-border); border: 1px solid var(--dup-border); }
+    .hud-row {
       display: flex;
       justify-content: space-between;
+      align-items: center;
+      gap: 8px;
       font-size: 13px;
-      color: #94a3b8;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .hud-pill {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 7px 10px;
       margin-bottom: 12px;
+    }
+    .count-num {
+      font-variant-numeric: tabular-nums;
+      font-size: 15px;
+      color: var(--text);
     }
     label {
       display: block;
       font-size: 13px;
-      color: #94a3b8;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .hint {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
       margin-bottom: 6px;
     }
     select, input, button {
       width: 100%;
-      padding: 12px;
+      min-height: 48px;
+      padding: 11px 13px;
       font-size: 16px;
-      border-radius: 10px;
-      border: 1px solid #334155;
-      margin-bottom: 12px;
+      font-family: inherit;
+      border-radius: 11px;
+      border: 1px solid var(--border);
+      margin-bottom: 10px;
+      transition: border-color 0.15s ease, background-color 0.15s ease;
     }
-    input, select { background: #0f172a; color: #f8fafc; }
-    select:disabled { opacity: 0.7; cursor: not-allowed; }
+    input, select { background: var(--surface-2); color: var(--text); }
+    input:focus-visible, select:focus-visible, button:focus-visible {
+      outline: 2px solid var(--primary);
+      outline-offset: 2px;
+    }
+    :is(input:user-invalid, input.user-invalid-fallback) {
+      border-color: var(--bad-border);
+      background: var(--bad-bg);
+    }
+    input:user-valid { border-color: var(--ok-border); }
+    .error-msg {
+      display: none;
+      color: var(--err-text);
+      font-size: 12px;
+      margin: -4px 0 10px 0;
+    }
+    :is(input:user-invalid, input.user-invalid-fallback) + .error-msg { display: block; }
+    select:disabled { opacity: 0.65; cursor: not-allowed; }
     button {
-      background: #2563eb;
-      color: #fff;
+      background: var(--primary);
+      color: #ffffff;
       font-weight: 700;
       border: none;
       cursor: pointer;
     }
-    button:hover { background: #1d4ed8; }
+    button:hover { background: var(--primary-hover); }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
-    button.secondary { background: #334155; }
-    button.secondary:hover { background: #475569; }
+    button.secondary { background: var(--secondary); color: var(--secondary-text); border: 1px solid var(--border); }
+    button.secondary:hover { filter: brightness(0.95); }
     button.small-btn {
       width: auto;
+      min-height: 36px;
       padding: 6px 12px;
-      font-size: 13px;
+      font-size: 12px;
       margin-bottom: 0;
+      border-radius: 9px;
+    }
+    .stage-pills {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+    .stage-pill {
+      min-height: 44px;
+      padding: 8px 6px;
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 0;
+      border-radius: 10px;
+      background: var(--surface-2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+    }
+    .stage-pill[aria-pressed="true"] {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: var(--primary);
     }
     .btn-row { display: flex; gap: 8px; }
     .btn-row button { flex: 1; }
-    .manual-row { display: flex; gap: 8px; }
+    .manual-row { display: flex; gap: 8px; align-items: stretch; }
     .manual-row input { flex: 1; margin-bottom: 0; }
     .manual-row button { width: auto; padding: 0 18px; margin-bottom: 0; }
     #reader {
       width: 100%;
-      border-radius: 10px;
+      border-radius: 12px;
       overflow: hidden;
       background: #000;
       margin-top: 4px;
+      contain: layout style paint;
     }
     .result-banner {
       display: none;
-      padding: 18px;
-      border-radius: 14px;
-      margin-bottom: 14px;
+      padding: 16px;
+      border-radius: var(--radius);
+      margin-bottom: 12px;
       text-align: center;
+      contain: layout style paint;
     }
-    .res-ok { background: #065f46; border: 2px solid #34d399; }
-    .res-dup { background: #78350f; border: 2px solid #fbbf24; }
-    .res-bad { background: #7f1d1d; border: 2px solid #f87171; }
-    .big-name { font-size: 24px; font-weight: 800; margin: 6px 0; line-height: 1.2; }
-    .sub-info { font-size: 15px; opacity: 0.95; }
-    .error-text { color: #fca5a5; font-size: 14px; min-height: 18px; }
-    .status-note { font-size: 13px; color: #94a3b8; margin-top: 8px; }
+    .res-ok { background: var(--ok-bg); border: 2px solid var(--ok-border); }
+    .res-dup { background: var(--dup-bg); border: 2px solid var(--dup-border); }
+    .res-bad { background: var(--bad-bg); border: 2px solid var(--bad-border); }
+    .big-name { font-size: 22px; font-weight: 800; margin: 4px 0; line-height: 1.2; }
+    .sub-info { font-size: 14px; opacity: 0.95; }
+    .error-text { color: var(--err-text); font-size: 13px; min-height: 18px; }
+    .status-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+    .visually-hidden:where(:not(:focus-within, :active)) {
+      position: absolute !important;
+      clip-path: inset(50%) !important;
+      overflow: hidden !important;
+      width: 1px !important;
+      height: 1px !important;
+      margin: -1px !important;
+      padding: 0 !important;
+      border: 0 !important;
+      white-space: nowrap !important;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
   </style>
 </head>
 <body>
 <div class="box">
   <div id="pinScreen" class="card">
-    <h2 style="margin-top:0;">Usher Scanner Login</h2>
+    <div class="brand-row">
+      <div class="brand-icon" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM18 18h3v3h-3zM14 20h2"/></svg>
+      </div>
+      <div>
+        <h2 style="margin:0; font-size:19px;">Usher Scanner Login</h2>
+        <span style="font-size:12px; color:var(--muted);">CvSU CSSO Attendance System</span>
+      </div>
+    </div>
     <form id="pinForm" onsubmit="unlockScanner(event)">
-      <label for="pinInput">Enter Usher PIN (6+ digits)</label>
-      <input id="pinInput" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit PIN" required />
+      <label for="pinInput">Usher PIN</label>
+      <span id="pin-hint" class="hint">6+ numeric digits provided by your event lead</span>
+      <input id="pinInput" type="password" inputmode="numeric" pattern="[0-9]{6,}" autocomplete="one-time-code" placeholder="Enter 6+ digit PIN" aria-describedby="pin-hint" data-error="pin-format-error" aria-invalid="false" required />
+      <div id="pin-format-error" class="error-msg">Error: Usher PIN must be at least 6 digits.</div>
+
       <label for="usherNameInput">Usher Name / Gate</label>
-      <input id="usherNameInput" type="text" maxlength="40" placeholder="e.g., Gate A - Marco" />
+      <span id="usher-hint" class="hint">Optional gate label recorded in Attendance Log</span>
+      <input id="usherNameInput" type="text" maxlength="40" placeholder="e.g., Gate A - Marco" aria-describedby="usher-hint" />
+
       <button id="unlockBtn" type="submit">Unlock Scanner</button>
     </form>
-    <div id="pinError" class="error-text"></div>
+    <div id="pinError" class="error-text" role="status" aria-live="polite"></div>
   </div>
 
   <div id="scannerScreen" style="display:none;">
     <div id="resultBanner" class="result-banner" role="status" aria-live="polite">
-      <div id="resTitle" style="font-size:14px; font-weight:bold; letter-spacing:1px;"></div>
+      <div id="resTitle" style="font-size:13px; font-weight:800; letter-spacing:1px;"></div>
       <div id="resName" class="big-name"></div>
       <div id="resSub" class="sub-info"></div>
     </div>
 
     <div class="card">
       <div class="header-row">
-        <h2 id="eventTitle" style="margin:0; font-size:20px;">Event Scanner</h2>
+        <h2 id="eventTitle" style="margin:0; font-size:18px;">Event Scanner</h2>
         <button class="secondary small-btn" type="button" onclick="logoutScanner()">Log Out</button>
       </div>
-      <div class="meta-row">
+      <div class="hud-row">
         <span>Event: <span id="eventIdBadge" class="badge">DEFAULT</span></span>
-        <span>Accepted: <strong id="scanCount">0</strong></span>
+        <span>Accepted: <strong id="scanCount" class="count-num">0</strong></span>
       </div>
-      <div class="meta-row" style="align-items:center; margin-top:-4px;">
-        <span id="syncBadge" style="font-size:12px; color:#34d399;">Sync: Loading snapshot...</span>
+      <div class="hud-pill">
+        <span id="syncBadge" style="font-size:12px; font-weight:600; color:var(--ok-border);">Sync: Loading snapshot...</span>
         <button id="syncNowBtn" class="secondary small-btn" type="button" onclick="flushScanQueue(true)">Sync Now</button>
       </div>
       <div id="syncAlertNote" class="error-text" style="display:none; margin-bottom:8px;"></div>
@@ -149,7 +378,12 @@
         Active Checkpoint Stage
         <span id="stageLockBadge" class="badge locked" style="display:none; margin-left:6px;">LOCKED</span>
       </label>
-      <select id="stageSelect">
+      <div id="stagePills" class="stage-pills" role="group" aria-label="Active Checkpoint Stage">
+        <button type="button" class="stage-pill" data-stage="Check-In" aria-pressed="true" onclick="selectStagePill('Check-In')">Check-In</button>
+        <button type="button" class="stage-pill" data-stage="Mid-Event" aria-pressed="false" onclick="selectStagePill('Mid-Event')">Mid-Event</button>
+        <button type="button" class="stage-pill" data-stage="Check-Out" aria-pressed="false" onclick="selectStagePill('Check-Out')">Check-Out</button>
+      </div>
+      <select id="stageSelect" class="visually-hidden" onchange="syncStagePills()">
         <option value="Check-In">Check-In</option>
         <option value="Mid-Event">Mid-Event</option>
         <option value="Check-Out">Check-Out</option>
@@ -166,13 +400,14 @@
       </div>
       <div id="reader"></div>
       <div id="statusNote" class="status-note">Ready. Tap Start Camera to grant permission and scan.</div>
-      <div id="apiVersionNote" class="status-note" style="font-size:11px; opacity:0.75;"></div>
+      <div id="apiVersionNote" class="status-note" style="font-size:11px; opacity:0.8;"></div>
     </div>
 
     <div class="card">
-      <label for="manualInput">Manual Pass Code (Fallback if camera unavailable)</label>
+      <label for="manualInput">Manual Pass Code</label>
+      <span id="manual-hint" class="hint">Fallback if camera unavailable — Format: v2|EVENT|ID|TOKEN</span>
       <form id="manualForm" class="manual-row" onsubmit="submitManualCode(event)">
-        <input id="manualInput" type="text" placeholder="STUDENTID|TOKEN" autocomplete="off" />
+        <input id="manualInput" type="text" placeholder="STUDENTID|TOKEN" autocomplete="off" aria-describedby="manual-hint" />
         <button id="manualSubmit" type="submit">Submit</button>
       </form>
     </div>
@@ -512,6 +747,24 @@
       stageSelect.disabled = false;
       lockBadge.style.display = 'none';
     }
+    syncStagePills();
+  }
+
+  function syncStagePills() {
+    const sel = document.getElementById('stageSelect');
+    const pills = document.querySelectorAll('#stagePills .stage-pill');
+    pills.forEach(btn => {
+      const active = btn.dataset.stage === sel.value;
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      btn.disabled = sel.disabled;
+    });
+  }
+
+  function selectStagePill(stage) {
+    const sel = document.getElementById('stageSelect');
+    if (sel.disabled) return;
+    sel.value = stage;
+    syncStagePills();
   }
 
   function returnToPinScreen(msg) {
@@ -820,6 +1073,27 @@
     } catch (e) {
       returnToPinScreen('');
     }
+  })();
+
+  // Lightweight :user-invalid <-> aria-invalid sync after interaction
+  (function initFieldValidationAria() {
+    const sync = (el) => {
+      if (!el || !el.matches || !el.matches('input, select, textarea')) return;
+      let bad = false;
+      try { bad = el.matches(':user-invalid'); } catch (e) { bad = !el.validity.valid; }
+      el.setAttribute('aria-invalid', bad ? 'true' : 'false');
+      const errId = el.dataset.error;
+      if (errId) {
+        const hintId = el.id === 'pinInput' ? 'pin-hint' : '';
+        const ids = [];
+        if (hintId) ids.push(hintId);
+        if (bad) ids.push(errId);
+        if (ids.length) el.setAttribute('aria-describedby', ids.join(' '));
+      }
+    };
+    document.addEventListener('blur', (e) => sync(e.target), true);
+    document.addEventListener('input', (e) => { if (e.target && e.target.getAttribute('aria-invalid') === 'true') sync(e.target); });
+    document.addEventListener('invalid', (e) => sync(e.target), true);
   })();
 </script>
 </body>
