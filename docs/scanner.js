@@ -648,7 +648,16 @@
           }
 
           statusEl.textContent = "Starting camera...";
-          const scanConfig = { fps: 10, qrbox: { width: 240, height: 240 } };
+          const scanConfig = {
+            fps: 10,
+            qrbox: (vw, vh) => {
+              const s = Math.max(
+                140,
+                Math.min(240, Math.floor(Math.min(vw, vh) * 0.72)),
+              );
+              return { width: s, height: s };
+            },
+          };
 
           // Build ordered fallback candidates: avoid getCameras() pre-open race & macro/depth lens traps
           const candidates = [];
@@ -1115,14 +1124,27 @@
         await executeOnlineScan(payloadText, stage);
       }
 
+      let resultBannerTimer = null;
+
       function showResult(res) {
         const banner = document.getElementById("resultBanner");
         const title = document.getElementById("resTitle");
         const name = document.getElementById("resName");
         const sub = document.getElementById("resSub");
 
+        if (resultBannerTimer) {
+          clearTimeout(resultBannerTimer);
+          resultBannerTimer = null;
+        }
         banner.style.display = "block";
         banner.className = "result-banner";
+        banner.onclick = () => {
+          banner.style.display = "none";
+        };
+        resultBannerTimer = setTimeout(() => {
+          banner.style.display = "none";
+          resultBannerTimer = null;
+        }, 3200);
 
         if (res.status === "OK") {
           acceptedCount++;
