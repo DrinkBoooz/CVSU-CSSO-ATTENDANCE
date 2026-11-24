@@ -305,6 +305,10 @@ function onOpen() {
       "replaceRegistrationForm",
     )
     .addItem(
+      "🧹 Clear Attendance Log & Verified Attendance (Keep Roster)",
+      "clearAttendanceLogsAndVerified",
+    )
+    .addItem(
       "🧹 Clear All Data Rows (Keep Headers & Config)",
       "clearAllDataRows",
     )
@@ -1435,14 +1439,9 @@ function recordScanBatch(sessionToken, scans) {
  * while preserving Row 1 headers, formatting, and the Config tab.
  * Requires typing "CLEAR ALL" in a confirmation prompt to prevent accidental data loss.
  */
-function clearAllDataRows() {
+function clearSheetDataRows_(targets, opts) {
   const ui = SpreadsheetApp.getUi();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const targets = [
-    { name: "Roster", minCols: 14 },
-    { name: "Attendance Log", minCols: 8 },
-    { name: "Verified Attendance", minCols: 8 },
-  ];
 
   const counts = targets.map((t) => {
     const s = ss.getSheetByName(t.name);
@@ -1451,13 +1450,13 @@ function clearAllDataRows() {
   });
 
   const prompt = ui.prompt(
-    "⚠️ Clear All Data Rows",
-    `This will permanently clear all data rows (keeping Row 1 headers and Config):\n\n• ${counts.join("\n• ")}\n\nType CLEAR ALL to confirm:`,
+    opts.promptTitle,
+    `${opts.promptIntro}:\n\n• ${counts.join("\n• ")}\n\nType ${opts.confirmPhrase} to confirm:`,
     ui.ButtonSet.OK_CANCEL,
   );
   if (
     prompt.getSelectedButton() !== ui.Button.OK ||
-    String(prompt.getResponseText() || "").trim() !== "CLEAR ALL"
+    String(prompt.getResponseText() || "").trim() !== opts.confirmPhrase
   ) {
     ui.alert("Cancelled", "No rows were cleared.", ui.ButtonSet.OK);
     return { ok: false, reason: "CANCELLED" };
@@ -1476,6 +1475,7 @@ function clearAllDataRows() {
   try {
     const cleared = {};
     const cfg = getConfig_();
+    let rosterCleared = false;
 
     targets.forEach((t) => {
       const s = ss.getSheetByName(t.name);
@@ -1483,6 +1483,7 @@ function clearAllDataRows() {
         cleared[t.name] = 0;
         return;
       }
+      if (t.name === "Roster") rosterCleared = true;
       const lastRow = s.getLastRow();
       if (lastRow > 1) {
         const numCols = Math.max(t.minCols, s.getLastColumn());
@@ -1493,18 +1494,54 @@ function clearAllDataRows() {
       }
     });
 
-    invalidateRosterCache_();
+    if (rosterCleared) invalidateRosterCache_();
     invalidateEventSeenIndex_(cfg.EVENT_ID);
 
+    const summary = targets.map((t) => `• ${t.name}: ${cleared[t.name]}`).join("\n");
     ui.alert(
-      "Data Rows Cleared",
-      `Cleared successfully (headers & Config preserved):\n\n• Roster: ${cleared["Roster"]}\n• Attendance Log: ${cleared["Attendance Log"]}\n• Verified Attendance: ${cleared["Verified Attendance"]}\n\nCaches invalidated.`,
+      opts.doneTitle,
+      `Cleared successfully (${opts.preservedLabel}):\n\n${summary}\n\nCaches invalidated.`,
       ui.ButtonSet.OK,
     );
     return { ok: true, cleared };
   } finally {
     lock.releaseLock();
   }
+}
+
+function clearAttendanceLogsAndVerified() {
+  return clearSheetDataRows_(
+    [
+      { name: "Attendance Log", minCols: 8 },
+      { name: "Verified Attendance", minCols: 8 },
+    ],
+    {
+      promptTitle: "⚠️ Clear Attendance Log & Verified Attendance",
+      promptIntro:
+        "This will permanently clear all attendance logs and verified summaries (keeping Roster, Config, and Row 1 headers)",
+      confirmPhrase: "CLEAR LOGS",
+      doneTitle: "Attendance Logs & Verified Attendance Cleared",
+      preservedLabel: "Roster, Config & headers preserved",
+    },
+  );
+}
+
+function clearAllDataRows() {
+  return clearSheetDataRows_(
+    [
+      { name: "Roster", minCols: 14 },
+      { name: "Attendance Log", minCols: 8 },
+      { name: "Verified Attendance", minCols: 8 },
+    ],
+    {
+      promptTitle: "⚠️ Clear All Data Rows",
+      promptIntro:
+        "This will permanently clear all data rows (keeping Row 1 headers and Config)",
+      confirmPhrase: "CLEAR ALL",
+      doneTitle: "Data Rows Cleared",
+      preservedLabel: "headers & Config preserved",
+    },
+  );
 }
 
 /**
