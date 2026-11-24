@@ -2333,6 +2333,7 @@ function lookupStudentPass(studentIdInput, emailInput, passPinInput) {
     eventTitle: cfg.EVENT_TITLE,
     eventId: issueEventId,
     protocol: issueProtocol,
+    requireMidEvent: cfg.REQUIRE_MID_EVENT !== false,
     studentId: matched.studentId,
     fullName: matched.fullName,
     section: matched.section,
@@ -2588,13 +2589,21 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
 
         try {
           const subject = `${cfg.EVENT_TITLE} (${issueEventId}) - Your QR Attendance Pass`;
+          const stagePlain =
+            cfg.REQUIRE_MID_EVENT !== false
+              ? "Check-In, Mid-Event, and Check-Out"
+              : "Check-In and Check-Out (Mid-Event optional)";
+          const stageHtml =
+            cfg.REQUIRE_MID_EVENT !== false
+              ? "<strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong>"
+              : "<strong>Check-In</strong> and <strong>Check-Out</strong> (Mid-Event optional)";
           const plainBody = [
             `${cfg.EVENT_TITLE} (${issueEventId})`,
             `Participant: ${fullName || "Participant"}`,
             `Student ID: ${studentId}${section ? " | " + section : ""}`,
             `Manual Pass Code: ${payload}`,
             "",
-            "Bring your physical School ID. You must be scanned at Check-In, Mid-Event, and Check-Out to qualify.",
+            `Bring your physical School ID. You must be scanned at ${stagePlain} to qualify.`,
           ].join("\n");
 
           const htmlBody = `
@@ -2609,7 +2618,7 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
               </p>
               <p style="margin-top: 10px; font-size: 12px; color: #444; line-height: 1.4;">
                 Save a screenshot of this pass and bring your physical School ID.<br>
-                You must be scanned at <strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong> to qualify.
+                You must be scanned at ${stageHtml} to qualify.
               </p>
             </div>
           `;
