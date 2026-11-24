@@ -59,6 +59,80 @@ function run() {
   // Row 4 stale trailing row was cleared
   assert.strictEqual(ver._data[3][0], '');
 
+  // 2. REQUIRE_MID_EVENT=FALSE: Check-In + Check-Out qualifies (Mid-Event optional) & stage order allows Check-In -> Check-Out
+  {
+    const env = loadCode({
+      sheets: {
+        Config: [
+          ['Key', 'Value', 'Notes'],
+          ['USHER_PIN', '619482', ''],
+          ['SECRET_SALT', 'fedcba9876543210fedcba9876543210', ''],
+          ['EVENT_ID', 'EVT-2026', ''],
+          ['ENFORCE_STAGE_ORDER', 'TRUE', ''],
+          ['REQUIRE_MID_EVENT', 'FALSE', '']
+        ],
+        Roster: [
+          ['Student ID', 'Email', 'Full Name', 'Section', 'Token', 'Pass Status'],
+          ['202310001', 'a@cvsu.edu.ph', 'Juan Dela Cruz', 'BSCS 4-2', '', 'READY_ON_PORTAL'],
+          ['202310002', 'b@cvsu.edu.ph', 'Maria Santos', 'BSCS 4-2', '', 'READY_ON_PORTAL'],
+          ['202310003', 'c@cvsu.edu.ph', 'Pedro Reyes', 'BSCS 4-2', '', 'READY_ON_PORTAL']
+        ],
+        'Attendance Log': [
+          ['Timestamp', 'Stage', 'Student ID', 'Full Name', 'Section', 'Usher Label', 'Scan Status', 'Event ID']
+        ],
+        'Verified Attendance': [
+          ['Student ID', 'Full Name', 'Section', 'Check-In', 'Mid-Event', 'Check-Out', 'Qualification', 'Stage Count']
+        ]
+      }
+    });
+    const login = env.ctx.verifyUsherPin('619482', 'Gate A');
+    assert.strictEqual(login.ok, true);
+
+    const snap = env.ctx.getScannerSnapshot(login.sessionToken);
+    assert.strictEqual(snap.requireMidEvent, false);
+
+    // Check-Out without Check-In is still rejected when ENFORCE_STAGE_ORDER=TRUE
+    const sig1 = env.ctx.createV2Signature_('EVT-2026', '202310001', 'fedcba9876543210fedcba9876543210');
+    const p1 = `v2|EVT-2026|202310001|${sig1}`;
+    const earlyOut = env.ctx.recordScan(login.sessionToken, p1, 'Check-Out');
+    assert.strictEqual(earlyOut.status, 'REJECTED_STAGE_ORDER');
+    assert.ok(earlyOut.message.includes('Check-In before Check-Out'));
+
+    // Check-In -> Check-Out directly (skipping Mid-Event) succeeds and qualifies
+    assert.strictEqual(env.ctx.recordScan(login.sessionToken, p1, 'Check-In').status, 'OK');
+    assert.strictEqual(env.ctx.recordScan(login.sessionToken, p1, 'Check-Out').status, 'OK');
+
+    // Student 2: Check-In + Mid-Event (no Check-Out) -> INCOMPLETE
+    assert.strictEqual(env.ctx.recordManualScan(login.sessionToken, '202310002', 'Check-In').status, 'OK');
+    assert.strictEqual(env.ctx.recordManualScan(login.sessionToken, '202310002', 'Mid-Event').status, 'OK');
+
+    // Student 3: All 3 stages (optional Mid-Event included) via batch -> QUALIFIED (Stage Count 3)
+    const sig3 = env.ctx.createV2Signature_('EVT-2026', '202310003', 'fedcba9876543210fedcba9876543210');
+    const p3 = `v2|EVT-2026|202310003|${sig3}`;
+    const batch = env.ctx.recordScanBatch(login.sessionToken, [
+      { clientId: 'b1', payload: p3, stage: 'Check-In' },
+      { clientId: 'b2', payload: p3, stage: 'Mid-Event' },
+      { clientId: 'b3', payload: p3, stage: 'Check-Out' }
+    ]);
+    assert.strictEqual(batch.results.every(r => r.status === 'OK'), true);
+
+    env.ctx.rebuildVerifiedAttendance_();
+    const v2 = env.sheets.get('Verified Attendance')._data;
+    const row1 = v2.find(r => r[0] === '202310001');
+    const row2 = v2.find(r => r[0] === '202310002');
+    const row3 = v2.find(r => r[0] === '202310003');
+    assert.strictEqual(row1[6], 'QUALIFIED');
+    assert.strictEqual(row1[7], 2);
+    assert.strictEqual(row2[6], 'INCOMPLETE');
+    assert.strictEqual(row2[7], 2);
+    assert.strictEqual(row3[6], 'QUALIFIED');
+    assert.strictEqual(row3[7], 3);
+
+    // applyAllSystemUpgrades preserves REQUIRE_MID_EVENT=FALSE
+    env.ctx.applyAllSystemUpgrades();
+    assert.strictEqual(env.ctx.getConfig_().REQUIRE_MID_EVENT, false);
+  }
+
   console.log('PASS: rebuild.test.js');
 }
 

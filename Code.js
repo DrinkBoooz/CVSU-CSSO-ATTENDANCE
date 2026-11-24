@@ -33,6 +33,7 @@ function getConfig_() {
     EVENT_ID: "DEFAULT",
     LOCKED_STAGE: "AUTO",
     ENFORCE_STAGE_ORDER: false,
+    REQUIRE_MID_EVENT: true,
   };
   if (sheet) {
     const lastRow = sheet.getLastRow();
@@ -44,6 +45,8 @@ function getConfig_() {
         if (key && key !== "Key" && val !== "") {
           if (key === "ENFORCE_STAGE_ORDER") {
             map[key] = val.toUpperCase() === "TRUE";
+          } else if (key === "REQUIRE_MID_EVENT") {
+            map[key] = val.toUpperCase() !== "FALSE";
           } else {
             map[key] = val;
           }
@@ -791,6 +794,23 @@ function putCachedSeenStages_(eventId, normId, seenStages) {
   } catch (e) {}
 }
 
+function checkStageOrderError_(stage, seenMask, cfg) {
+  if (!cfg.ENFORCE_STAGE_ORDER) return null;
+  if (stage === "Mid-Event" && !(seenMask & STAGE_BITS["Check-In"])) {
+    return "Must complete Check-In before Mid-Event.";
+  }
+  if (stage === "Check-Out") {
+    if (cfg.REQUIRE_MID_EVENT !== false) {
+      if (!(seenMask & STAGE_BITS["Mid-Event"])) {
+        return "Must complete Mid-Event before Check-Out.";
+      }
+    } else if (!(seenMask & STAGE_BITS["Check-In"])) {
+      return "Must complete Check-In before Check-Out.";
+    }
+  }
+  return null;
+}
+
 /**
  * Called by the Web App on every QR or manual pass scan.
  * Enforces server-side session token, LOCKED_STAGE, v1/v2 signature & event binding,
@@ -1020,35 +1040,20 @@ function recordScan(sessionToken, payloadStr, stage) {
       };
     }
 
-    if (cfg.ENFORCE_STAGE_ORDER) {
-      if (cleanStage === "Mid-Event" && !(seenMask & STAGE_BITS["Check-In"])) {
-        logAttempt(
-          studentRecord.studentId,
-          studentRecord.fullName,
-          studentRecord.section,
-          "REJECTED_STAGE_ORDER",
-        );
-        return {
-          status: "REJECTED_STAGE_ORDER",
-          fullName: studentRecord.fullName,
-          studentId: studentRecord.studentId,
-          message: "Must complete Check-In before Mid-Event.",
-        };
-      }
-      if (cleanStage === "Check-Out" && !(seenMask & STAGE_BITS["Mid-Event"])) {
-        logAttempt(
-          studentRecord.studentId,
-          studentRecord.fullName,
-          studentRecord.section,
-          "REJECTED_STAGE_ORDER",
-        );
-        return {
-          status: "REJECTED_STAGE_ORDER",
-          fullName: studentRecord.fullName,
-          studentId: studentRecord.studentId,
-          message: "Must complete Mid-Event before Check-Out.",
-        };
-      }
+    const orderErr = checkStageOrderError_(cleanStage, seenMask, cfg);
+    if (orderErr) {
+      logAttempt(
+        studentRecord.studentId,
+        studentRecord.fullName,
+        studentRecord.section,
+        "REJECTED_STAGE_ORDER",
+      );
+      return {
+        status: "REJECTED_STAGE_ORDER",
+        fullName: studentRecord.fullName,
+        studentId: studentRecord.studentId,
+        message: orderErr,
+      };
     }
 
     logAttempt(
@@ -1117,6 +1122,7 @@ function getScannerSnapshot(sessionToken) {
     eventId: cfg.EVENT_ID,
     lockedStage: cfg.LOCKED_STAGE,
     enforceStageOrder: !!cfg.ENFORCE_STAGE_ORDER,
+    requireMidEvent: cfg.REQUIRE_MID_EVENT !== false,
     v1Retired: !!cfg.V1_COMPAT_RETIRED,
     v1CompatEventId: cfg.V1_COMPAT_EVENT_ID || "DEFAULT",
     roster: compactRoster,
@@ -1408,49 +1414,27 @@ function recordScanBatch(sessionToken, scans) {
         continue;
       }
 
-      if (cfg.ENFORCE_STAGE_ORDER) {
-        if (p.cleanStage === "Mid-Event" && !(seenMask & STAGE_BITS["Check-In"])) {
-          rowsToWrite.push([
-            p.scanTime,
-            p.cleanStage,
-            safeCell_(rec.studentId),
-            safeCell_(rec.fullName),
-            safeCell_(rec.section),
-            safeCell_(sess.usherLabel),
-            "REJECTED_STAGE_ORDER",
-            safeCell_(cfg.EVENT_ID),
-          ]);
-          results.push({
-            clientId: p.clientId,
-            status: "REJECTED_STAGE_ORDER",
-            studentId: rec.studentId,
-            fullName: rec.fullName,
-            stage: p.cleanStage,
-            message: "Must complete Check-In before Mid-Event.",
-          });
-          continue;
-        }
-        if (p.cleanStage === "Check-Out" && !(seenMask & STAGE_BITS["Mid-Event"])) {
-          rowsToWrite.push([
-            p.scanTime,
-            p.cleanStage,
-            safeCell_(rec.studentId),
-            safeCell_(rec.fullName),
-            safeCell_(rec.section),
-            safeCell_(sess.usherLabel),
-            "REJECTED_STAGE_ORDER",
-            safeCell_(cfg.EVENT_ID),
-          ]);
-          results.push({
-            clientId: p.clientId,
-            status: "REJECTED_STAGE_ORDER",
-            studentId: rec.studentId,
-            fullName: rec.fullName,
-            stage: p.cleanStage,
-            message: "Must complete Mid-Event before Check-Out.",
-          });
-          continue;
-        }
+      const batchOrderErr = checkStageOrderError_(p.cleanStage, seenMask, cfg);
+      if (batchOrderErr) {
+        rowsToWrite.push([
+          p.scanTime,
+          p.cleanStage,
+          safeCell_(rec.studentId),
+          safeCell_(rec.fullName),
+          safeCell_(rec.section),
+          safeCell_(sess.usherLabel),
+          "REJECTED_STAGE_ORDER",
+          safeCell_(cfg.EVENT_ID),
+        ]);
+        results.push({
+          clientId: p.clientId,
+          status: "REJECTED_STAGE_ORDER",
+          studentId: rec.studentId,
+          fullName: rec.fullName,
+          stage: p.cleanStage,
+          message: batchOrderErr,
+        });
+        continue;
       }
 
       rowsToWrite.push([
@@ -1592,25 +1576,15 @@ function recordManualScan(sessionToken, studentIdInput, stage) {
       };
     }
 
-    if (cfg.ENFORCE_STAGE_ORDER) {
-      if (cleanStage === "Mid-Event" && !(seenMask & STAGE_BITS["Check-In"])) {
-        logManualAttempt("REJECTED_STAGE_ORDER");
-        return {
-          status: "REJECTED_STAGE_ORDER",
-          fullName: studentRecord.fullName,
-          studentId: studentRecord.studentId,
-          message: "Must complete Check-In before Mid-Event.",
-        };
-      }
-      if (cleanStage === "Check-Out" && !(seenMask & STAGE_BITS["Mid-Event"])) {
-        logManualAttempt("REJECTED_STAGE_ORDER");
-        return {
-          status: "REJECTED_STAGE_ORDER",
-          fullName: studentRecord.fullName,
-          studentId: studentRecord.studentId,
-          message: "Must complete Mid-Event before Check-Out.",
-        };
-      }
+    const manualOrderErr = checkStageOrderError_(cleanStage, seenMask, cfg);
+    if (manualOrderErr) {
+      logManualAttempt("REJECTED_STAGE_ORDER");
+      return {
+        status: "REJECTED_STAGE_ORDER",
+        fullName: studentRecord.fullName,
+        studentId: studentRecord.studentId,
+        message: manualOrderErr,
+      };
     }
 
     logManualAttempt("ACCEPTED");
@@ -2359,6 +2333,7 @@ function lookupStudentPass(studentIdInput, emailInput, passPinInput) {
     eventTitle: cfg.EVENT_TITLE,
     eventId: issueEventId,
     protocol: issueProtocol,
+    requireMidEvent: cfg.REQUIRE_MID_EVENT !== false,
     studentId: matched.studentId,
     fullName: matched.fullName,
     section: matched.section,
@@ -2614,13 +2589,21 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
 
         try {
           const subject = `${cfg.EVENT_TITLE} (${issueEventId}) - Your QR Attendance Pass`;
+          const stagePlain =
+            cfg.REQUIRE_MID_EVENT !== false
+              ? "Check-In, Mid-Event, and Check-Out"
+              : "Check-In and Check-Out (Mid-Event optional)";
+          const stageHtml =
+            cfg.REQUIRE_MID_EVENT !== false
+              ? "<strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong>"
+              : "<strong>Check-In</strong> and <strong>Check-Out</strong> (Mid-Event optional)";
           const plainBody = [
             `${cfg.EVENT_TITLE} (${issueEventId})`,
             `Participant: ${fullName || "Participant"}`,
             `Student ID: ${studentId}${section ? " | " + section : ""}`,
             `Manual Pass Code: ${payload}`,
             "",
-            "Bring your physical School ID. You must be scanned at Check-In, Mid-Event, and Check-Out to qualify.",
+            `Bring your physical School ID. You must be scanned at ${stagePlain} to qualify.`,
           ].join("\n");
 
           const htmlBody = `
@@ -2635,7 +2618,7 @@ function sendPasses_(targetRowIndices, requireConfirm, opts) {
               </p>
               <p style="margin-top: 10px; font-size: 12px; color: #444; line-height: 1.4;">
                 Save a screenshot of this pass and bring your physical School ID.<br>
-                You must be scanned at <strong>Check-In</strong>, <strong>Mid-Event</strong>, and <strong>Check-Out</strong> to qualify.
+                You must be scanned at ${stageHtml} to qualify.
               </p>
             </div>
           `;
@@ -2815,7 +2798,11 @@ function rebuildVerifiedAttendance_() {
       const co = item.stages["Check-Out"] || "—";
       const count =
         (ci !== "—" ? 1 : 0) + (me !== "—" ? 1 : 0) + (co !== "—" ? 1 : 0);
-      const qualified = count === 3 ? "QUALIFIED" : "INCOMPLETE";
+      const isQualified =
+        cfg.REQUIRE_MID_EVENT !== false
+          ? ci !== "—" && me !== "—" && co !== "—"
+          : ci !== "—" && co !== "—";
+      const qualified = isQualified ? "QUALIFIED" : "INCOMPLETE";
       outRows.push([
         safeCell_(item.studentId),
         safeCell_(item.fullName),
@@ -3124,7 +3111,12 @@ function ensureConfigKeys_(ss) {
     [
       "ENFORCE_STAGE_ORDER",
       "FALSE",
-      "If TRUE, requires Check-In before Mid-Event and Mid-Event before Check-Out",
+      "If TRUE, enforces stage order (Check-In -> Mid-Event -> Check-Out, or Check-In -> Check-Out when Mid-Event is optional)",
+    ],
+    [
+      "REQUIRE_MID_EVENT",
+      "TRUE",
+      "TRUE (default) = Check-In + Mid-Event + Check-Out required; FALSE = Check-In + Check-Out only (Mid-Event optional)",
     ],
     [
       "AUTO_EMAIL_ON_SUBMIT",
@@ -3162,6 +3154,12 @@ function ensureConfigKeys_(ss) {
         .setAllowInvalid(false)
         .build();
       sheet.getRange(i + 1, 2).setDataValidation(rule);
+    } else if (k === "REQUIRE_MID_EVENT") {
+      const boolRule = SpreadsheetApp.newDataValidation()
+        .requireValueInList(["TRUE", "FALSE"], true)
+        .setAllowInvalid(false)
+        .build();
+      sheet.getRange(i + 1, 2).setDataValidation(boolRule);
     } else if (k === "PORTAL_BASE_URL" && !v) {
       sheet.getRange(i + 1, 2).setValue(defaultPortalBase);
       filled.push("PORTAL_BASE_URL");

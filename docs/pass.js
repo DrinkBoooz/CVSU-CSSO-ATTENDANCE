@@ -34,6 +34,13 @@
     document.getElementById('studentName').textContent = res.fullName || res.studentId;
     document.getElementById('studentMeta').textContent = `${res.studentId}${res.section ? ' | ' + res.section : ''}`;
     document.getElementById('qrImg').src = res.qrDataUri;
+    const stageEl = document.getElementById('stageReminder');
+    if (stageEl) {
+      stageEl.textContent =
+        res.requireMidEvent === false
+          ? 'Check-In and Check-Out (Mid-Event optional)'
+          : 'Check-In, Mid-Event, and Check-Out';
+    }
     document.getElementById('lookupCard').style.display = 'none';
     document.getElementById('passCard').style.display = 'block';
   }
@@ -95,6 +102,7 @@
           ok: true,
           eventId: res.eventId,
           eventTitle: res.eventTitle,
+          requireMidEvent: res.requireMidEvent !== false,
           studentId: res.studentId,
           fullName: res.fullName,
           section: res.section,
@@ -172,7 +180,13 @@
           ctx.fillText('Present with physical School ID', 320, 800);
           ctx.fillStyle = '#64748b';
           ctx.font = '500 18px system-ui, -apple-system, sans-serif';
-          ctx.fillText('Check-In  •  Mid-Event  •  Check-Out', 320, 832);
+          ctx.fillText(
+            currentPass.requireMidEvent === false
+              ? 'Check-In  •  Check-Out (Mid-Event Optional)'
+              : 'Check-In  •  Mid-Event  •  Check-Out',
+            320,
+            832
+          );
 
           triggerDownload(canvas.toDataURL('image/png'));
         } catch (err) {

@@ -38,6 +38,7 @@
       let snapshotRoster = {};
       let snapshotSeen = {};
       let snapshotEnforceOrder = false;
+      let snapshotRequireMidEvent = true;
       let snapshotV1Retired = false;
       let snapshotV1CompatEventId = "DEFAULT";
       let snapshotLockedStage = "AUTO";
@@ -140,6 +141,13 @@
             snapshotRoster = snap.roster || {};
             snapshotSeen = snap.seen || {};
             snapshotEnforceOrder = !!snap.enforceStageOrder;
+            snapshotRequireMidEvent = snap.requireMidEvent !== false;
+            const midPill = document.querySelector('.stage-pill[data-stage="Mid-Event"]');
+            if (midPill) {
+              midPill.textContent = snapshotRequireMidEvent
+                ? "Mid-Event"
+                : "Mid-Event (Optional)";
+            }
             snapshotV1Retired = !!snap.v1Retired;
             snapshotV1CompatEventId = snap.v1CompatEventId || "DEFAULT";
             snapshotLockedStage = snap.lockedStage || "AUTO";
@@ -350,14 +358,25 @@
               message: "Must complete Check-In before Mid-Event.",
             };
           }
-          if (stage === "Check-Out" && !(mask & STAGE_BITS["Mid-Event"])) {
-            return {
-              ok: false,
-              status: "REJECTED_STAGE_ORDER",
-              studentId,
-              fullName,
-              message: "Must complete Mid-Event before Check-Out.",
-            };
+          if (stage === "Check-Out") {
+            if (snapshotRequireMidEvent && !(mask & STAGE_BITS["Mid-Event"])) {
+              return {
+                ok: false,
+                status: "REJECTED_STAGE_ORDER",
+                studentId,
+                fullName,
+                message: "Must complete Mid-Event before Check-Out.",
+              };
+            }
+            if (!snapshotRequireMidEvent && !(mask & STAGE_BITS["Check-In"])) {
+              return {
+                ok: false,
+                status: "REJECTED_STAGE_ORDER",
+                studentId,
+                fullName,
+                message: "Must complete Check-In before Check-Out.",
+              };
+            }
           }
         }
         return { ok: true, normId, studentId, fullName, section, bit };
@@ -897,14 +916,25 @@
               });
               return;
             }
-            if (stage === "Check-Out" && !(mask & STAGE_BITS["Mid-Event"])) {
-              showResult({
-                status: "REJECTED_STAGE_ORDER",
-                studentId,
-                fullName,
-                message: "Must complete Mid-Event before Check-Out.",
-              });
-              return;
+            if (stage === "Check-Out") {
+              if (snapshotRequireMidEvent && !(mask & STAGE_BITS["Mid-Event"])) {
+                showResult({
+                  status: "REJECTED_STAGE_ORDER",
+                  studentId,
+                  fullName,
+                  message: "Must complete Mid-Event before Check-Out.",
+                });
+                return;
+              }
+              if (!snapshotRequireMidEvent && !(mask & STAGE_BITS["Check-In"])) {
+                showResult({
+                  status: "REJECTED_STAGE_ORDER",
+                  studentId,
+                  fullName,
+                  message: "Must complete Check-In before Check-Out.",
+                });
+                return;
+              }
             }
           }
           if (verifyFirst) {
