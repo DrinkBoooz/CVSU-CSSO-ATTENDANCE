@@ -1797,18 +1797,22 @@ function setupRegistrationFormAndTrigger() {
   } catch (e) {
     // setRequireLogin is Workspace-domain specific; ignore on personal accounts
   }
-  let portalUrl = "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html";
+  const prodPortalBase = "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE";
   const gasExecRe = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
   const prodExecUrl =
     "https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec";
+  let portalBase = prodPortalBase;
   let webAppUrl = "";
   const cfgSheetForPortal = ss.getSheetByName("Config");
   if (cfgSheetForPortal && cfgSheetForPortal.getLastRow() > 1) {
     const cfgRows = cfgSheetForPortal.getDataRange().getValues();
     for (let i = 1; i < cfgRows.length; i++) {
-      if (String(cfgRows[i][0] || "").trim() === "WEB_APP_URL") {
-        webAppUrl = String(cfgRows[i][1] || "").trim();
-        break;
+      const cfgKey = String(cfgRows[i][0] || "").trim();
+      const cfgVal = String(cfgRows[i][1] || "").trim();
+      if (cfgKey === "PORTAL_BASE_URL" && /^https:\/\/.+/.test(cfgVal)) {
+        portalBase = cfgVal.replace(/\/+$/, "");
+      } else if (cfgKey === "WEB_APP_URL" && cfgVal) {
+        webAppUrl = cfgVal;
       }
     }
   }
@@ -1821,7 +1825,11 @@ function setupRegistrationFormAndTrigger() {
       if (gasExecRe.test(svcUrl)) webAppUrl = svcUrl;
     } catch (e) {}
   }
-  if (gasExecRe.test(webAppUrl) && webAppUrl !== prodExecUrl) {
+  let portalUrl = `${portalBase}/pass.html`;
+  if (
+    gasExecRe.test(webAppUrl) &&
+    (webAppUrl !== prodExecUrl || portalBase !== prodPortalBase)
+  ) {
     portalUrl = `${portalUrl}?api=${encodeURIComponent(webAppUrl)}`;
   }
 
@@ -2826,6 +2834,16 @@ function ensureConfigKeys_(ss) {
       "AUTO_EMAIL_ON_SUBMIT",
       "FALSE",
       "FALSE = zero-email QR Pass Portal mode (unlimited); set TRUE to also email on Form submit",
+    ],
+    [
+      "PORTAL_BASE_URL",
+      "",
+      "Optional custom GitHub Pages base URL for forks (e.g. https://<user>.github.io/<repo>)",
+    ],
+    [
+      "WEB_APP_URL",
+      "",
+      "Optional Apps Script Web App /exec URL embedded as ?api= in the Form confirmation link",
     ],
   ];
   const toAdd = defaults.filter(([k]) => !existingKeys.has(k));

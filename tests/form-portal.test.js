@@ -293,6 +293,13 @@ function run() {
     const expectedUrl = `https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html?api=${encodeURIComponent(stagingApi)}`;
     assert.strictEqual(res.portalUrl, expectedUrl);
     assert.ok(formInfo.getConfirmationMessage().includes(expectedUrl));
+
+    // Fork with custom PORTAL_BASE_URL (trailing slash stripped cleanly)
+    env.sheets.get('Config').appendRow(['PORTAL_BASE_URL', 'https://myorg.github.io/my-attendance/', 'Fork Pages URL']);
+    const forkRes = env.ctx.setupRegistrationFormAndTrigger();
+    const expectedForkUrl = `https://myorg.github.io/my-attendance/pass.html?api=${encodeURIComponent(stagingApi)}`;
+    assert.strictEqual(forkRes.portalUrl, expectedForkUrl);
+    assert.ok(formInfo.getConfirmationMessage().includes(expectedForkUrl));
   }
 
   // 7. Personal Pass PIN hashed into Roster Col O and enforced on lookupStudentPass

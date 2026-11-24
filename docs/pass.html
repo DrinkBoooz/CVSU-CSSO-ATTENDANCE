@@ -8,6 +8,7 @@
   <title>CvSU CSSO — Get Your QR Attendance Pass</title>
   <link rel="preconnect" href="https://script.google.com" crossorigin />
   <link rel="preconnect" href="https://script.googleusercontent.com" crossorigin />
+  <script src="./config.js"></script>
   <style>
     :root {
       color-scheme: dark light;
@@ -278,7 +279,9 @@
 </div>
 
 <script>
-  const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec';
+  const DEFAULT_API_URL =
+    (window.CSSO_CONFIG && window.CSSO_CONFIG.DEFAULT_API_URL) ||
+    'https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec';
   const GAS_EXEC_RE = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
   const rawApiParam = (new URLSearchParams(window.location.search).get('api') || '').trim();
   const API_URL = GAS_EXEC_RE.test(rawApiParam) ? rawApiParam : DEFAULT_API_URL;
