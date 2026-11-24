@@ -291,7 +291,7 @@ function run() {
     const res = env.ctx.setupRegistrationFormAndTrigger();
     assert.strictEqual(res.ok, true);
     const expectedUrl = `https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html?api=${encodeURIComponent(stagingApi)}`;
-    const expectedScannerUrl = `https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/?api=${encodeURIComponent(stagingApi)}`;
+    const expectedScannerUrl = `https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/index.html?api=${encodeURIComponent(stagingApi)}`;
     assert.strictEqual(res.portalUrl, expectedUrl);
     assert.strictEqual(res.scannerUrl, expectedScannerUrl);
     assert.ok(formInfo.getConfirmationMessage().includes(expectedUrl));
@@ -305,7 +305,7 @@ function run() {
     env.sheets.get('Config').appendRow(['PORTAL_BASE_URL', 'https://myorg.github.io/my-attendance/', 'Fork Pages URL']);
     const forkRes = env.ctx.setupRegistrationFormAndTrigger();
     const expectedForkUrl = `https://myorg.github.io/my-attendance/pass.html?api=${encodeURIComponent(stagingApi)}`;
-    const expectedForkScanner = `https://myorg.github.io/my-attendance/?api=${encodeURIComponent(stagingApi)}`;
+    const expectedForkScanner = `https://myorg.github.io/my-attendance/index.html?api=${encodeURIComponent(stagingApi)}`;
     assert.strictEqual(forkRes.portalUrl, expectedForkUrl);
     assert.strictEqual(forkRes.scannerUrl, expectedForkScanner);
     assert.ok(formInfo.getConfirmationMessage().includes(expectedForkUrl));
@@ -470,7 +470,7 @@ function run() {
     );
     assert.strictEqual(cfgMap().get('PORTAL_BASE_URL'), 'https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE');
     assert.strictEqual(cfgMap().get('WEB_APP_URL'), '');
-    assert.strictEqual(cfgMap().get('SCANNER_PORTAL_URL'), 'https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/');
+    assert.strictEqual(cfgMap().get('SCANNER_PORTAL_URL'), 'https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/index.html');
     assert.strictEqual(cfgMap().get('PASS_PORTAL_URL'), 'https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html');
 
     // Custom values must NOT be overwritten on subsequent upgrades, and portal links sync to them
@@ -478,7 +478,7 @@ function run() {
     sheets.get('Config')._data[portalRowIdx][1] = 'https://customorg.github.io/events';
     ctx.applyAllSystemUpgrades();
     assert.strictEqual(cfgMap().get('PORTAL_BASE_URL'), 'https://customorg.github.io/events');
-    assert.strictEqual(cfgMap().get('SCANNER_PORTAL_URL'), 'https://customorg.github.io/events/');
+    assert.strictEqual(cfgMap().get('SCANNER_PORTAL_URL'), 'https://customorg.github.io/events/index.html');
     assert.strictEqual(cfgMap().get('PASS_PORTAL_URL'), 'https://customorg.github.io/events/pass.html');
   }
 
