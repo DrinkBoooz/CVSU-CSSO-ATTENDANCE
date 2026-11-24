@@ -240,7 +240,7 @@
     <form id="lookupForm" onsubmit="fetchPass(event)">
       <label for="studentIdInput">Student ID</label>
       <span id="id-hint" class="hint">Example: 202300328 (letters, numbers, or dash)</span>
-      <input id="studentIdInput" type="text" pattern="[A-Za-z0-9-]+" placeholder="e.g., 202300328" autocomplete="off" aria-describedby="id-hint" data-error="id-error" aria-invalid="false" required />
+      <input id="studentIdInput" type="text" pattern="[A-Za-z0-9\-]+" placeholder="e.g., 202300328" autocomplete="off" aria-describedby="id-hint" data-error="id-error" aria-invalid="false" required />
       <div id="id-error" class="error-msg">Error: Enter a valid Student ID (letters, numbers, or dash only).</div>
 
       <label for="emailInput">Registered Email</label>
