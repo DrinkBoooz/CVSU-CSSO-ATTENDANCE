@@ -175,7 +175,11 @@ function startTestServer() {
     }
     const ext = path.extname(filePath);
     const mime =
-      ext === ".js" ? "application/javascript" : "text/html; charset=utf-8";
+      ext === ".js"
+        ? "application/javascript; charset=utf-8"
+        : ext === ".css"
+          ? "text/css; charset=utf-8"
+          : "text/html; charset=utf-8";
     res.writeHead(200, { "Content-Type": mime });
     fs.createReadStream(filePath).pipe(res);
   });
@@ -228,12 +232,17 @@ async function run() {
 
     await page.goto(baseUrl, { waitUntil: "networkidle" });
 
-    // 1. Zero external CDN requests (self-hosted vendor/html5-qrcode.min.js)
+    // 1. Zero external CDN requests (self-hosted vendor/html5-qrcode.min.js) & strict CSP (no unsafe-inline)
     assert.strictEqual(
       externalRequests.length,
       0,
       "Unexpected external requests: " + externalRequests.join(", "),
     );
+    const csp = await page.getAttribute(
+      'meta[http-equiv="Content-Security-Policy"]',
+      "content",
+    );
+    assert.ok(!/unsafe-inline/.test(csp), "CSP must not allow unsafe-inline anywhere");
 
     // 2. Wrong PIN then valid PIN
     await page.fill("#pinInput", "000000");

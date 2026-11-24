@@ -463,7 +463,8 @@ function verifyUsherPin(pinInput, usherName) {
       `High failed PIN attempt volume (${failCount} in ${PIN_FAIL_WINDOW_SEC}s window).`,
     );
   }
-  Utilities.sleep(1500);
+  const backoffMs = failCount >= 20 ? 5000 : failCount >= 10 ? 3000 : 1500;
+  Utilities.sleep(backoffMs);
   return { ok: false, message: "Incorrect Usher PIN." };
 }
 
