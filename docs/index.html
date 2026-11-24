@@ -457,9 +457,20 @@
     return String(id || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   }
 
+  function getScanQueueKey() {
+    try {
+      const hash = btoa(unescape(encodeURIComponent(`${API_URL}|${activeEventId}`)))
+        .replace(/[^A-Za-z0-9]/g, '')
+        .slice(-16);
+      return `${SCAN_QUEUE_KEY}_${hash}`;
+    } catch (e) {
+      return SCAN_QUEUE_KEY;
+    }
+  }
+
   function loadScanQueue() {
     try {
-      const raw = localStorage.getItem(SCAN_QUEUE_KEY);
+      const raw = localStorage.getItem(getScanQueueKey());
       scanQueue = raw ? JSON.parse(raw) : [];
       if (!Array.isArray(scanQueue)) scanQueue = [];
     } catch (e) {
@@ -469,7 +480,7 @@
   }
 
   function saveScanQueue() {
-    try { localStorage.setItem(SCAN_QUEUE_KEY, JSON.stringify(scanQueue)); } catch (e) {}
+    try { localStorage.setItem(getScanQueueKey(), JSON.stringify(scanQueue)); } catch (e) {}
     updateSyncUI();
   }
 
@@ -496,11 +507,30 @@
     if (btn) btn.disabled = isSyncing || pending === 0;
   }
 
+  function applyStageLockUI(lockedStage, eventId) {
+    const badgeEl = document.getElementById('eventIdBadge');
+    if (badgeEl && eventId) badgeEl.textContent = eventId;
+    const stageSelect = document.getElementById('stageSelect');
+    const lockBadge = document.getElementById('stageLockBadge');
+    if (stageSelect && lockBadge) {
+      if (lockedStage && lockedStage !== 'AUTO') {
+        stageSelect.value = lockedStage;
+        stageSelect.disabled = true;
+        lockBadge.style.display = 'inline-block';
+      } else {
+        stageSelect.disabled = false;
+        lockBadge.style.display = 'none';
+      }
+      syncStagePills();
+    }
+  }
+
   async function loadSnapshot() {
     if (!sessionToken) return;
     try {
       const snap = await apiCall({ action: 'snapshot', sessionToken });
       if (snap && snap.ok) {
+        const prevEventId = activeEventId;
         snapshotRoster = snap.roster || {};
         snapshotSeen = snap.seen || {};
         snapshotEnforceOrder = !!snap.enforceStageOrder;
@@ -508,7 +538,11 @@
         snapshotV1CompatEventId = snap.v1CompatEventId || 'DEFAULT';
         snapshotLockedStage = snap.lockedStage || 'AUTO';
         activeEventId = snap.eventId || activeEventId;
+        if (activeEventId !== prevEventId) {
+          loadScanQueue();
+        }
         snapshotReady = true;
+        applyStageLockUI(snapshotLockedStage, activeEventId);
         updateSyncUI();
       }
     } catch (e) {
@@ -533,13 +567,20 @@
   }
 
   async function flushScanQueue(manualTrigger) {
-    if (!sessionToken || isSyncing || scanQueue.length === 0) return;
+    const eligible = scanQueue.filter(x => !x.eventId || x.eventId === activeEventId);
+    if (!sessionToken || isSyncing || eligible.length === 0) return;
     isSyncing = true;
     updateSyncUI();
-    const batch = scanQueue.slice(0, 50);
+    const batch = eligible.slice(0, 50);
     const batchIds = new Set(batch.map(x => x.clientId));
+    const wireScans = batch.map(x => ({
+      clientId: x.clientId,
+      payload: x.payload,
+      stage: x.stage,
+      scannedAt: x.scannedAt
+    }));
     try {
-      const res = await apiCall({ action: 'scanBatch', sessionToken, scans: batch });
+      const res = await apiCall({ action: 'scanBatch', sessionToken, scans: wireScans });
       if (res && res.status === 'UNAUTHORIZED') {
         isSyncing = false;
         updateSyncUI();
@@ -549,9 +590,20 @@
       if (res && res.ok) {
         scanQueue = scanQueue.filter(x => !batchIds.has(x.clientId));
         saveScanQueue();
-        if (res.seen) snapshotSeen = res.seen;
+        if (res.seen) {
+          const merged = Object.assign({}, res.seen);
+          for (const item of scanQueue) {
+            if ((!item.eventId || item.eventId === activeEventId) && item.normId && item.bit) {
+              merged[item.normId] = (merged[item.normId] || 0) | item.bit;
+            }
+          }
+          snapshotSeen = merged;
+        }
         const rejected = (res.results || []).filter(r => r.status && r.status !== 'OK');
         if (rejected.length > 0) {
+          acceptedCount = Math.max(0, acceptedCount - rejected.length);
+          const countEl = document.getElementById('scanCount');
+          if (countEl) countEl.textContent = String(acceptedCount);
           syncAlerts += rejected.length;
           const alertEl = document.getElementById('syncAlertNote');
           if (alertEl) {
@@ -735,19 +787,7 @@
     document.getElementById('pinScreen').style.display = 'none';
     document.getElementById('scannerScreen').style.display = 'block';
     document.getElementById('eventTitle').textContent = res.eventTitle || 'Event Scanner';
-    document.getElementById('eventIdBadge').textContent = res.eventId || 'DEFAULT';
-
-    const stageSelect = document.getElementById('stageSelect');
-    const lockBadge = document.getElementById('stageLockBadge');
-    if (res.lockedStage && res.lockedStage !== 'AUTO') {
-      stageSelect.value = res.lockedStage;
-      stageSelect.disabled = true;
-      lockBadge.style.display = 'inline-block';
-    } else {
-      stageSelect.disabled = false;
-      lockBadge.style.display = 'none';
-    }
-    syncStagePills();
+    applyStageLockUI(res.lockedStage, activeEventId);
   }
 
   function syncStagePills() {
@@ -862,12 +902,17 @@
         cameraConfig = select.value || devices[0].id;
       }
 
+      if (!sessionToken) return;
       await html5QrCode.start(
         cameraConfig,
         { fps: 10, qrbox: { width: 240, height: 240 } },
         onScanSuccess,
         () => {}
       );
+      if (!sessionToken) {
+        await stopCamera();
+        return;
+      }
       statusEl.textContent = 'Scanning active.';
     } catch (err) {
       const msg = String(err && err.message ? err.message : err);
@@ -941,7 +986,10 @@
             clientId: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
             payload: payloadText,
             stage,
-            scannedAt: nowIso
+            scannedAt: nowIso,
+            eventId: activeEventId,
+            normId: check.normId,
+            bit: check.bit
           });
           saveScanQueue();
           rememberLocalSeen(activeEventId, stage, payloadText, check);

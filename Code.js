@@ -595,19 +595,22 @@ function getRosterEntry_(ss, normId) {
 
   if (!shard) {
     const shards = rebuildRosterShards_(ss);
-    if (!shards) return { missingSheet: true, record: null };
+    if (!shards) return { missingSheet: true, fromCache: false, record: null };
     shard = shards[b];
+    fromCache = false;
   } else if (!shard[normId] && fromCache) {
     // Cache hit on shard, but student missing -> refresh once for walk-ins
     const shards = rebuildRosterShards_(ss);
-    if (!shards) return { missingSheet: true, record: null };
+    if (!shards) return { missingSheet: true, fromCache: false, record: null };
     shard = shards[b];
+    fromCache = false;
   }
 
   const tuple = shard ? shard[normId] : null;
-  if (!tuple) return { missingSheet: false, record: null };
+  if (!tuple) return { missingSheet: false, fromCache, record: null };
   return {
     missingSheet: false,
+    fromCache,
     record: {
       studentId: tuple[0],
       fullName: tuple[1],
@@ -1513,6 +1516,18 @@ function clearAllDataRows() {
  * (with Editor access to this sheet) so automated QR emails use the 1,500/day Workspace quota,
  * while the scanner Web App remains deployed under your personal account for ANYONE_ANONYMOUS access.
  */
+function upsertConfigRow_(configSheet, key, value, notes) {
+  if (!configSheet) return;
+  const rows = configSheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0] || "").trim() === key) {
+      configSheet.getRange(i + 1, 2, 1, 2).setValues([[value, notes || ""]]);
+      return;
+    }
+  }
+  configSheet.appendRow([key, value, notes || ""]);
+}
+
 function setupRegistrationFormAndTrigger() {
   const ui = SpreadsheetApp.getUi();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1622,26 +1637,21 @@ function setupRegistrationFormAndTrigger() {
   const publishedUrl = form.getPublishedUrl();
   const editUrl = form.getEditUrl();
 
-  // Save Form URL into Config tab for easy reference
+  // Save Shareable & Editable Form URLs into Config tab for easy reference
   const configSheet = ss.getSheetByName("Config");
   if (configSheet) {
-    const rows = configSheet.getDataRange().getValues();
-    let foundRow = -1;
-    for (let i = 1; i < rows.length; i++) {
-      if (String(rows[i][0] || "").trim() === "REGISTRATION_FORM_URL") {
-        foundRow = i + 1;
-        break;
-      }
-    }
-    if (foundRow > 0) {
-      configSheet.getRange(foundRow, 2, 1, 2).setValues([[publishedUrl, `Linked Form ID: ${formId}`]]);
-    } else {
-      configSheet.appendRow([
-        "REGISTRATION_FORM_URL",
-        publishedUrl,
-        `Linked Form ID: ${formId}`,
-      ]);
-    }
+    upsertConfigRow_(
+      configSheet,
+      "REGISTRATION_FORM_URL",
+      publishedUrl,
+      `Linked Form ID: ${formId}`,
+    );
+    upsertConfigRow_(
+      configSheet,
+      "REGISTRATION_FORM_EDIT_URL",
+      editUrl,
+      `Admin editable Form link (Form ID: ${formId})`,
+    );
   }
 
   ui.alert(
@@ -1651,7 +1661,7 @@ function setupRegistrationFormAndTrigger() {
     `Zero-Email Registration Form & Roster Sync is now ACTIVE!\n\n` +
       `Students submit this Form -> auto-syncs to Roster -> download their QR Pass on pass.html (unlimited, 0 emails used).\n\n` +
       `Shareable Form URL (saved in Config):\n${publishedUrl}\n\n` +
-      `Form Edit URL:\n${editUrl}`,
+      `Form Edit URL (saved in Config):\n${editUrl}`,
     ui.ButtonSet.OK,
   );
   return { ok: true, formId, publishedUrl, editUrl };
@@ -1790,25 +1800,29 @@ function onRegistrationFormSubmit(e) {
         ? `v2|${issueEventId}|${studentId}|${token}`
         : `${studentId}|${token}`;
 
-    // Check if student already exists in Roster (prevent duplicate Roster rows)
+    // Strict 1-submission-per-student enforcement (by Student ID OR Email):
+    // never overwrite an existing Roster row from a public Form re-submission.
     const normId = normalizeId_(studentId);
+    const cleanEmailLower = cleanEmail.toLowerCase();
     const lastRow = rosterSheet.getLastRow();
-    let existingRowNum = -1;
-    let prevAttempts = 0;
     if (lastRow > 1) {
       const existingData = rosterSheet
-        .getRange(2, 1, lastRow - 1, 14)
+        .getRange(2, 1, lastRow - 1, 2)
         .getValues();
       for (let i = 0; i < existingData.length; i++) {
-        if (normalizeId_(existingData[i][0]) === normId) {
-          existingRowNum = i + 2;
-          prevAttempts = Number(existingData[i][9]) || 0;
-          break;
+        const existingNormId = normalizeId_(existingData[i][0]);
+        const existingEmail = String(existingData[i][1] || "")
+          .trim()
+          .toLowerCase();
+        if (existingNormId === normId || existingEmail === cleanEmailLower) {
+          console.warn(
+            `onRegistrationFormSubmit: duplicate submission ignored (existing row ${i + 2}) for ${studentId} / ${cleanEmail}`,
+          );
+          return;
         }
       }
     }
 
-    const attemptNum = prevAttempts;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const passStatus = emailRegex.test(cleanEmail)
       ? "READY_ON_PORTAL"
@@ -1824,19 +1838,14 @@ function onRegistrationFormSubmit(e) {
       "", // QR Preview preserved
       "",
       "",
-      attemptNum,
+      0,
       "",
       lastError,
       issueProtocol,
       issueEventId,
     ];
 
-    if (existingRowNum > 0) {
-      rosterSheet.getRange(existingRowNum, 1, 1, 14).setValues([rowValues]);
-    } else {
-      rosterSheet.appendRow(rowValues);
-    }
-
+    rosterSheet.appendRow(rowValues);
     invalidateRosterCache_();
   } finally {
     lock.releaseLock();
@@ -1897,13 +1906,31 @@ function lookupStudentPass(studentIdInput, emailInput) {
   }
 
   const emailHash = hashEmailForCache_(cleanEmail, cfg);
-  const entry = lookup.record;
-  const matched =
+  let entry = lookup.record;
+  let matched =
     entry &&
     entry.emailHash &&
     constantTimeEqual_(entry.emailHash, emailHash)
       ? entry
       : null;
+
+  // Heal stale cached Roster shard once if email was corrected directly in the sheet
+  if (!matched && entry && lookup.fromCache) {
+    const liveShards = rebuildRosterShards_(ss);
+    const liveTuple = liveShards ? liveShards[rosterShardIdx_(normId)][normId] : null;
+    if (
+      liveTuple &&
+      liveTuple[3] &&
+      constantTimeEqual_(liveTuple[3], emailHash)
+    ) {
+      matched = {
+        studentId: liveTuple[0],
+        fullName: liveTuple[1],
+        section: liveTuple[2],
+        emailHash: liveTuple[3],
+      };
+    }
+  }
 
   if (!matched) {
     const nextFails = currentFails + 1;
@@ -2444,6 +2471,9 @@ function applyAllSystemUpgrades() {
   };
 
   runStep("Config Keys & Validation", () => ensureConfigKeys_(ss));
+  runStep("Registration Form Config Links", () =>
+    syncRegistrationFormConfigLinks_(ss),
+  );
   runStep("Secret Salt Initialization", () => ensureStrongSecretSalt_(ss));
   runStep("Sheets & Canonical Headers", () => ensureSheetsAndHeaders_(ss));
   runStep("Plain-Text ID Formatting", () => formatIdColumnsAsText_(ss));
@@ -2477,6 +2507,29 @@ function applyAllSystemUpgrades() {
     report.join("\n"),
     SpreadsheetApp.getUi().ButtonSet.OK,
   );
+}
+
+function syncRegistrationFormConfigLinks_(ss) {
+  const formId =
+    PropertiesService.getScriptProperties().getProperty(
+      "REGISTRATION_FORM_ID",
+    ) || "";
+  if (!formId) return "No linked Form yet (optional)";
+  const form = FormApp.openById(formId);
+  const configSheet = ss.getSheetByName("Config");
+  upsertConfigRow_(
+    configSheet,
+    "REGISTRATION_FORM_URL",
+    form.getPublishedUrl(),
+    `Linked Form ID: ${formId}`,
+  );
+  upsertConfigRow_(
+    configSheet,
+    "REGISTRATION_FORM_EDIT_URL",
+    form.getEditUrl(),
+    `Admin editable Form link (Form ID: ${formId})`,
+  );
+  return "Synced Form & Edit URLs";
 }
 
 function ensureConfigKeys_(ss) {

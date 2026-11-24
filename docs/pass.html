@@ -240,7 +240,7 @@
     <form id="lookupForm" onsubmit="fetchPass(event)">
       <label for="studentIdInput">Student ID</label>
       <span id="id-hint" class="hint">Example: 202300328 (letters, numbers, or dash)</span>
-      <input id="studentIdInput" type="text" pattern="[A-Za-z0-9-]+" placeholder="e.g., 202300328" autocomplete="off" aria-describedby="id-hint" data-error="id-error" aria-invalid="false" required />
+      <input id="studentIdInput" type="text" pattern="\s*[A-Za-z0-9\-]+\s*" placeholder="e.g., 202300328" autocomplete="off" aria-describedby="id-hint" data-error="id-error" aria-invalid="false" required />
       <div id="id-error" class="error-msg">Error: Enter a valid Student ID (letters, numbers, or dash only).</div>
 
       <label for="emailInput">Registered Email</label>
@@ -279,24 +279,32 @@
   if (rawApiParam && !GAS_EXEC_RE.test(rawApiParam)) {
     document.getElementById('errorText').textContent = 'Ignored untrusted ?api= URL; using default official endpoint.';
   }
+  const FETCH_TIMEOUT_MS = 15000;
   let currentPass = null;
 
   async function fetchPass(ev) {
     if (ev) ev.preventDefault();
-    const studentId = document.getElementById('studentIdInput').value.trim();
-    const email = document.getElementById('emailInput').value.trim();
+    const idEl = document.getElementById('studentIdInput');
+    const emailEl = document.getElementById('emailInput');
+    const studentId = idEl.value.trim();
+    const email = emailEl.value.trim();
+    idEl.value = studentId;
+    emailEl.value = email;
     const btn = document.getElementById('submitBtn');
     const errEl = document.getElementById('errorText');
 
     errEl.textContent = 'Generating your signed QR pass...';
     btn.disabled = true;
 
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     try {
       const resp = await fetch(API_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({ action: 'lookupPass', studentId, email }),
-        redirect: 'follow'
+        redirect: 'follow',
+        signal: ctrl.signal
       });
       if (!resp.ok) throw new Error('Server HTTP ' + resp.status);
       const res = await resp.json();
@@ -318,8 +326,13 @@
       document.getElementById('lookupCard').style.display = 'none';
       document.getElementById('passCard').style.display = 'block';
     } catch (err) {
-      errEl.textContent = (err && err.message) || 'Connection error. Please try again.';
+      if (err && err.name === 'AbortError') {
+        errEl.textContent = 'Request timed out after 15s. Check Wi-Fi and try again.';
+      } else {
+        errEl.textContent = (err && err.message) || 'Connection error. Please try again.';
+      }
     } finally {
+      clearTimeout(timer);
       btn.disabled = false;
     }
   }
@@ -336,6 +349,14 @@
 
   function resetForm() {
     currentPass = null;
+    const form = document.getElementById('lookupForm');
+    if (form) form.reset();
+    ['studentIdInput', 'emailInput'].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.setAttribute('aria-invalid', 'false');
+      el.setAttribute('aria-describedby', id === 'studentIdInput' ? 'id-hint' : 'email-hint');
+    });
     document.getElementById('passCard').style.display = 'none';
     document.getElementById('lookupCard').style.display = 'block';
     document.getElementById('errorText').textContent = '';
@@ -355,7 +376,12 @@
       if (bad && errId) ids.push(errId);
       if (ids.length) el.setAttribute('aria-describedby', ids.join(' '));
     };
-    document.addEventListener('blur', (e) => sync(e.target), true);
+    document.addEventListener('blur', (e) => {
+      if (e.target && e.target.id === 'studentIdInput' && typeof e.target.value === 'string') {
+        e.target.value = e.target.value.trim();
+      }
+      sync(e.target);
+    }, true);
     document.addEventListener('input', (e) => { if (e.target && e.target.getAttribute('aria-invalid') === 'true') sync(e.target); });
     document.addEventListener('invalid', (e) => sync(e.target), true);
   })();
