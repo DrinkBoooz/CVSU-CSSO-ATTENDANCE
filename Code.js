@@ -1989,6 +1989,28 @@ function replaceRegistrationForm() {
  * Installable onFormSubmit trigger: registers the student in Roster (deduped by Student ID)
  * and immediately emails their signed QR Attendance Pass via GmailApp.
  */
+function redactFormResponsePin_(e) {
+  try {
+    if (!e || !e.range || !e.range.getSheet || !e.range.getRow) return;
+    const sheet = e.range.getSheet();
+    const row = e.range.getRow();
+    if (!sheet || row <= 1) return;
+    const lastCol = sheet.getLastColumn();
+    if (lastCol < 1) return;
+    const headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    for (let c = 0; c < headers.length; c++) {
+      const h = String(headers[c] || "")
+        .trim()
+        .toLowerCase();
+      if (h === "personal pass pin" || h === "pass pin" || h === "pin") {
+        sheet.getRange(row, c + 1).setValue("[REDACTED]");
+      }
+    }
+  } catch (err) {
+    console.warn("redactFormResponsePin_ skipped:", err);
+  }
+}
+
 function onRegistrationFormSubmit(e) {
   if (!e || (!e.namedValues && !e.values)) return;
 
@@ -2114,6 +2136,7 @@ function onRegistrationFormSubmit(e) {
     rosterSheet.appendRow(rowValues);
     invalidateRosterCache_();
   } finally {
+    redactFormResponsePin_(e);
     lock.releaseLock();
   }
 }

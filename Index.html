@@ -2,455 +2,74 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Usher QR Scanner</title>
-  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>CvSU CSSO Event QR Attendance</title>
   <style>
+    :root { color-scheme: dark light; font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
     * { box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
       margin: 0;
-      padding: 16px;
-      background: #0f172a;
+      padding: 20px 14px;
+      background: #090d16;
       color: #f8fafc;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
     }
-    .box {
-      max-width: 480px;
-      margin: 0 auto;
+    @media (prefers-color-scheme: light) {
+      body { background: #f1f5f9; color: #0f172a; }
+      .card { background: #ffffff; border-color: #cbd5e1; }
+      .sub { color: #475569; }
+      a.btn.secondary { background: #e2e8f0; color: #0f172a; border-color: #cbd5e1; }
     }
     .card {
-      background: #1e293b;
-      border: 1px solid #334155;
-      border-radius: 14px;
-      padding: 18px;
-      margin-bottom: 14px;
-    }
-    .header-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 10px;
-    }
-    .badge {
-      display: inline-block;
-      background: #1d4ed8;
-      color: #dbeafe;
-      font-size: 12px;
-      font-weight: 700;
-      padding: 4px 10px;
-      border-radius: 999px;
-      letter-spacing: 0.4px;
-    }
-    .badge.locked {
-      background: #92400e;
-      color: #fef3c7;
-    }
-    .meta-row {
-      display: flex;
-      justify-content: space-between;
-      font-size: 13px;
-      color: #94a3b8;
-      margin-bottom: 12px;
-    }
-    label {
-      display: block;
-      font-size: 13px;
-      color: #94a3b8;
-      margin-bottom: 6px;
-    }
-    select, input, button {
       width: 100%;
-      padding: 12px;
-      font-size: 16px;
-      border-radius: 10px;
-      border: 1px solid #334155;
-      margin-bottom: 12px;
-    }
-    input, select {
-      background: #0f172a;
-      color: #f8fafc;
-    }
-    select:disabled {
-      opacity: 0.7;
-      cursor: not-allowed;
-    }
-    button {
-      background: #2563eb;
-      color: #fff;
-      font-weight: 700;
-      border: none;
-      cursor: pointer;
-    }
-    button:hover { background: #1d4ed8; }
-    button:disabled { opacity: 0.55; cursor: not-allowed; }
-    button.secondary {
-      background: #334155;
-    }
-    button.secondary:hover { background: #475569; }
-    button.small-btn {
-      width: auto;
-      padding: 6px 12px;
-      font-size: 13px;
-      margin-bottom: 0;
-    }
-    .btn-row {
-      display: flex;
-      gap: 8px;
-    }
-    .btn-row button { flex: 1; }
-    .manual-row {
-      display: flex;
-      gap: 8px;
-    }
-    .manual-row input { flex: 1; margin-bottom: 0; }
-    .manual-row button { width: auto; padding: 0 18px; margin-bottom: 0; }
-    #reader {
-      width: 100%;
-      border-radius: 10px;
-      overflow: hidden;
-      background: #000;
-      margin-top: 4px;
-    }
-    .result-banner {
-      display: none;
-      padding: 18px;
-      border-radius: 14px;
-      margin-bottom: 14px;
+      max-width: 440px;
+      background: #111827;
+      border: 1px solid #263248;
+      border-radius: 16px;
+      padding: 22px;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
       text-align: center;
     }
-    .res-ok { background: #065f46; border: 2px solid #34d399; }
-    .res-dup { background: #78350f; border: 2px solid #fbbf24; }
-    .res-bad { background: #7f1d1d; border: 2px solid #f87171; }
-    .big-name {
-      font-size: 24px;
-      font-weight: 800;
-      margin: 6px 0;
-      line-height: 1.2;
-    }
-    .sub-info {
+    h1 { margin: 0 0 8px 0; font-size: 20px; }
+    .sub { font-size: 13px; color: #94a3b8; line-height: 1.5; margin: 0 0 18px 0; }
+    a.btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 48px;
+      width: 100%;
+      border-radius: 11px;
+      background: #1d4ed8;
+      color: #ffffff;
+      font-weight: 700;
       font-size: 15px;
-      opacity: 0.95;
+      text-decoration: none;
+      margin-bottom: 10px;
+      padding: 10px 14px;
     }
-    .error-text {
-      color: #fca5a5;
-      font-size: 14px;
-      min-height: 18px;
-    }
-    .status-note {
-      font-size: 13px;
-      color: #94a3b8;
-      margin-top: 8px;
-    }
+    a.btn:hover { background: #1e40af; }
+    a.btn.secondary { background: #1e293b; color: #e2e8f0; border: 1px solid #263248; }
+    .note { font-size: 12px; color: #94a3b8; margin-top: 12px; line-height: 1.45; }
   </style>
 </head>
 <body>
-<div class="box">
-  <div id="pinScreen" class="card">
-    <h2 style="margin-top:0;">Usher Scanner Login</h2>
-    <form id="pinForm" onsubmit="unlockScanner(event)">
-      <label for="pinInput">Enter Usher PIN (6+ digits)</label>
-      <input id="pinInput" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit PIN" required />
-      <label for="usherNameInput">Usher Name / Gate</label>
-      <input id="usherNameInput" type="text" maxlength="40" placeholder="e.g., Gate A - Marco" />
-      <button id="unlockBtn" type="submit">Unlock Scanner</button>
-    </form>
-    <div id="pinError" class="error-text"></div>
-  </div>
-
-  <div id="scannerScreen" style="display:none;">
-    <div id="resultBanner" class="result-banner" role="status" aria-live="polite">
-      <div id="resTitle" style="font-size:14px; font-weight:bold; letter-spacing:1px;"></div>
-      <div id="resName" class="big-name"></div>
-      <div id="resSub" class="sub-info"></div>
-    </div>
-
-    <div class="card">
-      <div class="header-row">
-        <h2 id="eventTitle" style="margin:0; font-size:20px;">Event Scanner</h2>
-        <button class="secondary small-btn" type="button" onclick="logoutScanner()">Log Out</button>
-      </div>
-      <div class="meta-row">
-        <span>Event: <span id="eventIdBadge" class="badge">DEFAULT</span></span>
-        <span>Accepted: <strong id="scanCount">0</strong></span>
-      </div>
-
-      <label for="stageSelect">
-        Active Checkpoint Stage
-        <span id="stageLockBadge" class="badge locked" style="display:none; margin-left:6px;">LOCKED</span>
-      </label>
-      <select id="stageSelect">
-        <option value="Check-In">Check-In</option>
-        <option value="Mid-Event">Mid-Event</option>
-        <option value="Check-Out">Check-Out</option>
-      </select>
-
-      <div style="background:#172554; border:1px solid #3b82f6; border-radius:10px; padding:10px 12px; font-size:13px; margin-bottom:12px;">
-        For continuous live camera scanning, open the
-        <a href="https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/" target="_blank" rel="noopener noreferrer" style="color:#93c5fd; font-weight:700;">HTTPS Usher Scanner</a>
-        (Google Apps Script iframes block live video permissions).
-      </div>
-
-      <label for="qrFileInput">Photo-Scan Fallback (Take / Upload QR Photo)</label>
-      <input id="qrFileInput" type="file" accept="image/*" capture="environment" onchange="scanPhotoFile(event)" />
-      <div id="reader" style="display:none;"></div>
-      <div id="statusNote" class="status-note">Ready (Fallback UI).</div>
-    </div>
-
-    <div class="card">
-      <label for="manualInput">Manual Pass Code (Fallback if camera unavailable)</label>
-      <form id="manualForm" class="manual-row" onsubmit="submitManualCode(event)">
-        <input id="manualInput" type="text" placeholder="STUDENTID|TOKEN" autocomplete="off" />
-        <button id="manualSubmit" type="submit">Submit</button>
-      </form>
-    </div>
-  </div>
-</div>
-
-<script>
-  const SESSION_KEY = 'csso_session_token';
-  const CAMERA_COOLDOWN_MS = 4000;
-
-  let html5QrCode = null;
-  let isProcessing = false;
-  let sessionToken = '';
-  let lastCameraPayload = '';
-  let lastCameraTime = 0;
-  let acceptedCount = 0;
-  let audioCtx = null;
-
-  function playTone(type) {
-    try {
-      const Ctx = window.AudioContext || window.webkitAudioContext;
-      if (!Ctx) return;
-      if (!audioCtx) audioCtx = new Ctx();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-
-      const beep = (freq, startOffset, duration) => {
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        osc.type = 'sine';
-        osc.frequency.value = freq;
-        gain.gain.value = 0.15;
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        const t = audioCtx.currentTime + startOffset;
-        osc.start(t);
-        osc.stop(t + duration);
-      };
-
-      if (type === 'ok') {
-        beep(880, 0, 0.14);
-        if (navigator.vibrate) navigator.vibrate(80);
-      } else if (type === 'dup') {
-        beep(520, 0, 0.1);
-        beep(520, 0.15, 0.1);
-        if (navigator.vibrate) navigator.vibrate([70, 50, 70]);
-      } else {
-        beep(220, 0, 0.28);
-        if (navigator.vibrate) navigator.vibrate(250);
-      }
-    } catch (e) {
-      // ignore audio errors
-    }
-  }
-
-  function applyScannerState(res) {
-    document.getElementById('pinScreen').style.display = 'none';
-    document.getElementById('scannerScreen').style.display = 'block';
-    document.getElementById('eventTitle').textContent = res.eventTitle || 'Event Scanner';
-    document.getElementById('eventIdBadge').textContent = res.eventId || 'DEFAULT';
-
-    const stageSelect = document.getElementById('stageSelect');
-    const lockBadge = document.getElementById('stageLockBadge');
-    if (res.lockedStage && res.lockedStage !== 'AUTO') {
-      stageSelect.value = res.lockedStage;
-      stageSelect.disabled = true;
-      lockBadge.style.display = 'inline-block';
-    } else {
-      stageSelect.disabled = false;
-      lockBadge.style.display = 'none';
-    }
-  }
-
-  function returnToPinScreen(msg) {
-    stopCamera();
-    sessionToken = '';
-    try { sessionStorage.removeItem(SESSION_KEY); } catch (e) {}
-    document.getElementById('scannerScreen').style.display = 'none';
-    document.getElementById('pinScreen').style.display = 'block';
-    document.getElementById('pinInput').value = '';
-    document.getElementById('pinError').textContent = msg || '';
-  }
-
-  function logoutScanner() {
-    returnToPinScreen('Logged out.');
-  }
-
-  function unlockScanner(ev) {
-    if (ev) ev.preventDefault();
-    const pin = document.getElementById('pinInput').value;
-    const usherName = document.getElementById('usherNameInput').value.trim() || 'Usher';
-    const btn = document.getElementById('unlockBtn');
-    const errEl = document.getElementById('pinError');
-
-    errEl.textContent = 'Verifying...';
-    btn.disabled = true;
-
-    google.script.run
-      .withSuccessHandler(res => {
-        btn.disabled = false;
-        if (res && res.ok) {
-          sessionToken = res.sessionToken;
-          try { sessionStorage.setItem(SESSION_KEY, sessionToken); } catch (e) {}
-          errEl.textContent = '';
-          applyScannerState(res);
-        } else {
-          errEl.textContent = (res && res.message) || 'Login failed.';
-        }
-      })
-      .withFailureHandler(err => {
-        btn.disabled = false;
-        errEl.textContent = (err && err.message) || 'Connection error.';
-      })
-      .verifyUsherPin(pin, usherName);
-  }
-
-  function scanPhotoFile(ev) {
-    const file = ev && ev.target && ev.target.files ? ev.target.files[0] : null;
-    if (!file) return;
-    const statusEl = document.getElementById('statusNote');
-    statusEl.textContent = 'Decoding QR photo...';
-    if (!html5QrCode) {
-      html5QrCode = new Html5Qrcode('reader');
-    }
-    html5QrCode.scanFile(file, false)
-      .then(decodedText => {
-        submitScan(decodedText, true);
-      })
-      .catch(err => {
-        statusEl.textContent = 'Could not read QR from photo: ' + (err && err.message ? err.message : err);
-      })
-      .finally(() => {
-        ev.target.value = '';
-      });
-  }
-
-  function stopCamera() {
-    // No live stream active in fallback GAS iframe UI
-  }
-
-  function onScanSuccess(decodedText) {
-    const now = Date.now();
-    if (decodedText === lastCameraPayload && (now - lastCameraTime) < CAMERA_COOLDOWN_MS) {
-      return;
-    }
-    lastCameraPayload = decodedText;
-    lastCameraTime = now;
-    submitScan(decodedText, false);
-  }
-
-  function submitManualCode(ev) {
-    if (ev) ev.preventDefault();
-    const input = document.getElementById('manualInput');
-    const code = input.value.trim();
-    if (!code) return;
-    submitScan(code, true);
-    input.value = '';
-  }
-
-  function submitScan(payloadText, fromManual) {
-    if (isProcessing) return;
-    isProcessing = true;
-
-    const stage = document.getElementById('stageSelect').value;
-    const statusEl = document.getElementById('statusNote');
-    statusEl.textContent = 'Checking pass...';
-
-    const resetReady = () => {
-      isProcessing = false;
-      statusEl.textContent = (html5QrCode && html5QrCode.isScanning) ? 'Scanning active.' : 'Ready.';
-    };
-
-    google.script.run
-      .withSuccessHandler(res => {
-        if (res && res.status === 'UNAUTHORIZED') {
-          isProcessing = false;
-          playTone('bad');
-          returnToPinScreen(res.message || 'Session expired. Please log in again.');
-          return;
-        }
-        showResult(res || { status: 'ERROR', message: 'Empty server response.' });
-        setTimeout(resetReady, fromManual ? 300 : 1200);
-      })
-      .withFailureHandler(err => {
-        showResult({ status: 'ERROR', message: (err && err.message) || 'Network error.' });
-        setTimeout(resetReady, 1200);
-      })
-      .recordScan(sessionToken, payloadText, stage);
-  }
-
-  function showResult(res) {
-    const banner = document.getElementById('resultBanner');
-    const title = document.getElementById('resTitle');
-    const name = document.getElementById('resName');
-    const sub = document.getElementById('resSub');
-
-    banner.style.display = 'block';
-    banner.className = 'result-banner';
-
-    if (res.status === 'OK') {
-      acceptedCount++;
-      document.getElementById('scanCount').textContent = String(acceptedCount);
-      banner.classList.add('res-ok');
-      title.textContent = 'VERIFIED - ' + String(res.stage || '').toUpperCase();
-      name.textContent = res.fullName || res.studentId || 'Participant';
-      sub.textContent = `ID: ${res.studentId} | ${res.section || 'No Section'} | ${res.time}`;
-      playTone('ok');
-    } else if (res.status === 'DUPLICATE') {
-      banner.classList.add('res-dup');
-      title.textContent = 'ALREADY SCANNED';
-      name.textContent = res.fullName || 'Duplicate Scan';
-      sub.textContent = `${res.studentId || ''} - ${res.message || ''}`;
-      playTone('dup');
-    } else {
-      const labels = {
-        REJECTED_FORGED: 'FORGED TOKEN',
-        REJECTED_MALFORMED: 'MALFORMED QR',
-        REJECTED_NOT_IN_ROSTER: 'NOT IN ROSTER',
-        REJECTED_STAGE_LOCKED: 'STAGE LOCKED',
-        REJECTED_STAGE_ORDER: 'OUT OF ORDER',
-        REJECTED_WRONG_EVENT: 'WRONG EVENT',
-        REJECTED_V1_RETIRED: 'LEGACY PASS RETIRED'
-      };
-      banner.classList.add('res-bad');
-      title.textContent = 'REJECTED';
-      name.textContent = labels[res.status] || res.status || 'ERROR';
-      sub.textContent = res.message || 'Invalid QR code.';
-      playTone('bad');
-    }
-  }
-
-  // Auto-restore session on page reload
-  (function initSession() {
-    let saved = '';
-    try { saved = sessionStorage.getItem(SESSION_KEY) || ''; } catch (e) {}
-    if (!saved) return;
-    document.getElementById('pinError').textContent = 'Restoring session...';
-    google.script.run
-      .withSuccessHandler(res => {
-        if (res && res.ok) {
-          sessionToken = saved;
-          document.getElementById('pinError').textContent = '';
-          applyScannerState(res);
-        } else {
-          returnToPinScreen('');
-        }
-      })
-      .withFailureHandler(() => {
-        returnToPinScreen('');
-      })
-      .getScannerState(saved);
-  })();
-</script>
+  <main class="card">
+    <h1>CvSU CSSO Attendance Portal</h1>
+    <p class="sub">
+      For rear-camera permissions and offline-first speed, open the standalone HTTPS interface outside the Apps Script frame.
+    </p>
+    <a class="btn" href="https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/" target="_top" rel="noopener noreferrer">
+      Open Usher QR Scanner
+    </a>
+    <a class="btn secondary" href="https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE/pass.html" target="_top" rel="noopener noreferrer">
+      Open Student QR Pass Portal
+    </a>
+    <p class="note">
+      If using a custom fork or staging deployment, append <code>?api=&lt;YOUR_WEB_APP_URL&gt;</code> or configure <code>docs/config.js</code>.
+    </p>
+  </main>
 </body>
 </html>
