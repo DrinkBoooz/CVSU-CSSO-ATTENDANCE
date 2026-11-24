@@ -616,10 +616,18 @@
       async function unlockScanner(ev) {
         if (ev) ev.preventDefault();
         const pin = document.getElementById("pinInput").value;
-        const usherName =
-          document.getElementById("usherNameInput").value.trim() || "Usher";
+        const usherEl = document.getElementById("usherNameInput");
+        const usherName = usherEl.value.trim();
+        usherEl.value = usherName;
         const btn = document.getElementById("unlockBtn");
         const errEl = document.getElementById("pinError");
+
+        if (usherName.length < 2) {
+          errEl.textContent =
+            "Please enter your Usher Name / Gate (at least 2 characters).";
+          usherEl.focus();
+          return;
+        }
 
         errEl.textContent = "Verifying...";
         btn.disabled = true;
@@ -1260,6 +1268,9 @@
         }
       })();
 
-      window.CSSOCommon.initFieldValidationAria({ pinInput: "pin-hint" });
+      window.CSSOCommon.initFieldValidationAria(
+        { pinInput: "pin-hint", usherNameInput: "usher-hint" },
+        ["usherNameInput"],
+      );
       window.CSSOCommon.bindDeclarativeHandlers();
       window.CSSOCommon.registerServiceWorker();

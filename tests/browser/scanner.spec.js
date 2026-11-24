@@ -244,7 +244,12 @@ async function run() {
     );
     assert.ok(!/unsafe-inline/.test(csp), "CSP must not allow unsafe-inline anywhere");
 
-    // 2. Wrong PIN then valid PIN
+    // 2. Missing usher name blocked, then wrong PIN, then valid PIN + Usher Name
+    await page.fill("#pinInput", "619482");
+    await page.click("#unlockBtn");
+    assert.strictEqual(await page.isVisible("#pinScreen"), true);
+
+    await page.fill("#usherNameInput", "Gate A");
     await page.fill("#pinInput", "000000");
     await page.click("#unlockBtn");
     await page.waitForFunction(() =>
@@ -254,7 +259,6 @@ async function run() {
     );
 
     await page.fill("#pinInput", "619482");
-    await page.fill("#usherNameInput", "Gate A");
     await page.click("#unlockBtn");
     await page.waitForSelector("#scannerScreen", { state: "visible" });
     assert.strictEqual(await page.textContent("#eventIdBadge"), "CSSO-2026");

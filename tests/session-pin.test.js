@@ -37,6 +37,10 @@ function run() {
       }
     });
 
+    const noName = ctx.verifyUsherPin('742915', '   ');
+    assert.strictEqual(noName.ok, false);
+    assert.match(noName.message, /Usher Name/i);
+
     const bad = ctx.verifyUsherPin('000000', 'Gate A');
     assert.strictEqual(bad.ok, false);
     assert.strictEqual(bad.message, 'Incorrect Usher PIN.');
