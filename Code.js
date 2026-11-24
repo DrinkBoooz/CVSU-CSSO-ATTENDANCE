@@ -215,6 +215,16 @@ function normalizeId_(id) {
 }
 
 /**
+ * Advisory-only check for the recommended EVENT_ID format MM-YYYY-Org-EventName
+ * (e.g. 02-2027-CSSO-GA). Never blocks; any value passing validateV2Field_ stays valid.
+ */
+function isRecommendedEventIdFormat_(eventId) {
+  return /^(0[1-9]|1[0-2])-\d{4}-[A-Za-z0-9]+(-[A-Za-z0-9]+)+$/.test(
+    String(eventId || ""),
+  );
+}
+
+/**
  * Creates a stateless HMAC-SHA256 signed session token tied to SECRET_SALT and USHER_PIN.
  * Rotating USHER_PIN immediately invalidates all previously issued tokens.
  */
@@ -2856,6 +2866,10 @@ function applyAllSystemUpgrades() {
       advisories.push(
         "still on legacy v1 EVENT_ID=DEFAULT; set a dedicated EVENT_ID for v2 event-bound passes",
       );
+    } else if (!isRecommendedEventIdFormat_(cfg.EVENT_ID)) {
+      advisories.push(
+        "EVENT_ID is valid but not in the recommended MM-YYYY-Org-EventName format (e.g. 02-2027-CSSO-GA)",
+      );
     }
     if (String(cfg.USHER_PIN).length < 8) {
       advisories.push(
@@ -2899,6 +2913,19 @@ function syncRegistrationFormConfigLinks_(ss) {
 }
 
 function ensureConfigKeys_(ss) {
+  const EVENT_ID_NOTE =
+    "Unique event code (scopes duplicates & Verified Attendance). Recommended format: MM-YYYY-Org-EventName, e.g. 02-2027-CSSO-GA. No spaces or | characters.";
+  const LOCKED_STAGE_NOTE =
+    "AUTO (default) lets ushers pick the stage; or lock to Check-In, Mid-Event, or Check-Out";
+  const LEGACY_EVENT_ID_NOTES = [
+    "Unique identifier for the active event (scopes duplicates and Verified Attendance)",
+    "Active event ID",
+  ];
+  const LEGACY_LOCKED_STAGE_NOTES = [
+    "Set to Check-In, Mid-Event, Check-Out, or AUTO",
+    "Set to Check-In, Mid-Event, Check-Out, or AUTO (if AUTO, ushers pick stage manually)",
+    "Stage lock",
+  ];
   let sheet = ss.getSheetByName("Config");
   if (!sheet) {
     sheet = ss.insertSheet("Config");
@@ -2913,9 +2940,9 @@ function ensureConfigKeys_(ss) {
     [
       "EVENT_ID",
       "DEFAULT",
-      "Unique identifier for the active event (scopes duplicates and Verified Attendance)",
+      EVENT_ID_NOTE,
     ],
-    ["LOCKED_STAGE", "AUTO", "Set to Check-In, Mid-Event, Check-Out, or AUTO"],
+    ["LOCKED_STAGE", "AUTO", LOCKED_STAGE_NOTE],
     [
       "ENFORCE_STAGE_ORDER",
       "FALSE",
@@ -2960,6 +2987,13 @@ function ensureConfigKeys_(ss) {
     } else if (k === "PORTAL_BASE_URL" && !v) {
       sheet.getRange(i + 1, 2).setValue(defaultPortalBase);
       filled.push("PORTAL_BASE_URL");
+    }
+    // Refresh legacy/default guidance notes without touching the user's values
+    if (k === "EVENT_ID" && LEGACY_EVENT_ID_NOTES.includes(String(updatedRows[i][2] || "").trim())) {
+      sheet.getRange(i + 1, 3).setValue(EVENT_ID_NOTE);
+    }
+    if (k === "LOCKED_STAGE" && LEGACY_LOCKED_STAGE_NOTES.includes(String(updatedRows[i][2] || "").trim())) {
+      sheet.getRange(i + 1, 3).setValue(LOCKED_STAGE_NOTE);
     }
   }
   const parts = [];

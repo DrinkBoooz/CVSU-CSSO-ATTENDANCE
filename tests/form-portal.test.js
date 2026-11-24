@@ -504,6 +504,27 @@ function run() {
     assert.strictEqual(custom.generated, false);
   }
 
+  // 12. EVENT_ID format advisory helper and refreshed Config guidance notes (values never overwritten)
+  {
+    const env = makeFixture();
+    const { ctx, sheets } = env;
+    assert.strictEqual(ctx.isRecommendedEventIdFormat_('02-2027-CSSO-GA'), true);
+    assert.strictEqual(ctx.isRecommendedEventIdFormat_('12-2026-CEIT-Intramurals-Day1'), true);
+    assert.strictEqual(ctx.isRecommendedEventIdFormat_('CSSO-2026'), false);
+    assert.strictEqual(ctx.isRecommendedEventIdFormat_('13-2027-CSSO-GA'), false);
+    assert.strictEqual(ctx.isRecommendedEventIdFormat_('DEFAULT'), false);
+
+    sheets.get('Config')._data.find(r => r[0] === 'EVENT_ID')[2] = 'Unique identifier for the active event (scopes duplicates and Verified Attendance)';
+    sheets.get('Config')._data.find(r => r[0] === 'LOCKED_STAGE')[2] = 'Stage lock';
+    ctx.applyAllSystemUpgrades();
+    const evRow = sheets.get('Config')._data.find(r => r[0] === 'EVENT_ID');
+    const lsRow = sheets.get('Config')._data.find(r => r[0] === 'LOCKED_STAGE');
+    assert.strictEqual(evRow[1], 'CSSO-2026');
+    assert.ok(evRow[2].includes('02-2027-CSSO-GA'));
+    assert.strictEqual(lsRow[1], 'AUTO');
+    assert.ok(lsRow[2].includes('AUTO (default)'));
+  }
+
   console.log('PASS: form-portal.test.js');
 }
 
