@@ -701,6 +701,11 @@ function onSheetEdit(e) {
           syncPortalLinksToConfig_(SpreadsheetApp.getActiveSpreadsheet());
         }
       }
+    } else if (name === "List") {
+      const editedRow = e.range.getRow ? e.range.getRow() : 2;
+      if (editedRow > 1) {
+        syncFormDropdownsFromList_(SpreadsheetApp.getActiveSpreadsheet());
+      }
     }
   } catch (err) {
     // ignore trigger errors
@@ -1845,13 +1850,6 @@ function setupRegistrationFormAndTrigger() {
     .requireTextMatchesPattern("^[A-Za-z .,'-]+$")
     .build();
 
-  const sectionValidation = FormApp.createTextValidation()
-    .setHelpText(
-      "Enter your Course & Section (e.g. BSCS 3-1, BSCS 4-4, or BSCS-3A).",
-    )
-    .requireTextMatchesPattern("^[A-Za-z]{2,10}[ -]?[1-5][ -]?[A-Za-z0-9]{1,3}$")
-    .build();
-
   const pinValidation = FormApp.createTextValidation()
     .setHelpText(
       "Choose a private 4 to 6 digit numeric PIN (e.g. 4829) to protect your QR Pass.",
@@ -1907,9 +1905,12 @@ function setupRegistrationFormAndTrigger() {
     }
   };
 
+  ensureListSheet_(ss);
+  const defaultList = getListDropdownOptions_(ss);
+
   ensureTextQuestion("Student ID", "Example: 202300328", idValidation);
   ensureTextQuestion("Full Name", "Example: Dela Cruz, Juan M.", nameValidation);
-  ensureTextQuestion("Section", "Example: BSCS 3-1", sectionValidation);
+  applyFormDropdownsFromList_(form, ss, defaultList);
   ensureTextQuestion(
     "Personal Pass PIN",
     "Choose a private 4–6 digit PIN to protect your QR Pass (e.g. 4829)",
@@ -1997,6 +1998,7 @@ function replaceRegistrationForm() {
   // Capture any Form-linked response tabs BEFORE unlinking (works in ALL locales: English, Filipino, etc.)
   const coreTabs = new Set([
     "Config",
+    "List",
     "Roster",
     "Attendance Log",
     "Verified Attendance",
@@ -2090,8 +2092,14 @@ function onRegistrationFormSubmit(e) {
     const pick = (keys) => {
       for (let i = 0; i < keys.length; i++) {
         const hit = nvLower[String(keys[i] || "").trim().toLowerCase()];
-        if (hit && hit[0] !== undefined) {
-          return String(hit[0]).trim();
+        if (Array.isArray(hit)) {
+          for (let j = 0; j < hit.length; j++) {
+            const val = String(hit[j] === undefined || hit[j] === null ? "" : hit[j]).trim();
+            if (val) return val;
+          }
+        } else if (hit !== undefined && hit !== null) {
+          const val = String(hit).trim();
+          if (val) return val;
         }
       }
       return "";
@@ -2117,7 +2125,21 @@ function onRegistrationFormSubmit(e) {
       .trim()
       .toUpperCase();
     const fullName = pick(["Full Name", "Name"]);
-    const section = pick(["Section", "Course & Section", "Year & Section"]);
+    const course = pick(["Course / Program", "Course", "Program"]);
+    const yearLevel = pick(["Year Level", "Year"]);
+    const rawSection = pick(["Section", "Course & Section", "Year & Section"]);
+    let section = rawSection;
+    if (course) {
+      if (yearLevel && rawSection) {
+        section = `${course} ${yearLevel}-${rawSection}`;
+      } else if (yearLevel) {
+        section = `${course} ${yearLevel}`;
+      } else if (rawSection) {
+        section = `${course} ${rawSection}`;
+      } else {
+        section = course;
+      }
+    }
     const passPin = pick(["Personal Pass PIN", "Pass PIN", "PIN"]);
 
     if (!studentId || !cleanEmail) {
@@ -2833,9 +2855,13 @@ function applyAllSystemUpgrades() {
   };
 
   runStep("Config Keys & Validation", () => ensureConfigKeys_(ss));
+  runStep("List Tab (Form Dropdown Options)", () => ensureListSheet_(ss));
   runStep("Portal Links in Config", () => syncPortalLinksToConfig_(ss));
   runStep("Registration Form Config Links", () =>
     syncRegistrationFormConfigLinks_(ss),
+  );
+  runStep("Sync Form Dropdowns from List", () =>
+    syncFormDropdownsFromList_(ss),
   );
   runStep("Secret Salt Initialization", () => ensureStrongSecretSalt_(ss));
   runStep("Sheets & Canonical Headers", () => ensureSheetsAndHeaders_(ss));
@@ -2911,6 +2937,157 @@ function syncRegistrationFormConfigLinks_(ss) {
     `Admin editable Form link (Form ID: ${formId})`,
   );
   return "Synced Form & Edit URLs";
+}
+
+function getDefaultListColumns_() {
+  return {
+    courses: [
+      "BSCS",
+      "BSIT",
+      "BSIS",
+      "BSCpE",
+      "BSCE",
+      "BSEE",
+      "BSME",
+      "BSArch",
+      "BSIndTech",
+    ],
+    years: ["1", "2", "3", "4", "5"],
+    sections: ["1", "2", "3", "4", "5", "6", "7", "8", "A", "B", "C", "D"],
+  };
+}
+
+/**
+ * Ensures the `List` tab exists with modifiable Form dropdown options
+ * (Col A: Course / Program, Col B: Year Level, Col C: Section).
+ * Never overwrites existing user-customized values.
+ */
+function ensureListSheet_(ss) {
+  let sheet = ss.getSheetByName("List");
+  const defaults = getDefaultListColumns_();
+  let created = false;
+  if (!sheet) {
+    sheet = ss.insertSheet("List");
+    created = true;
+  }
+  const headers = ["Course / Program", "Year Level", "Section"];
+  if (sheet.getLastRow() <= 1) {
+    const maxLen = Math.max(
+      defaults.courses.length,
+      defaults.years.length,
+      defaults.sections.length,
+    );
+    const rows = [headers];
+    for (let i = 0; i < maxLen; i++) {
+      rows.push([
+        defaults.courses[i] || "",
+        defaults.years[i] || "",
+        defaults.sections[i] || "",
+      ]);
+    }
+    sheet.getRange(1, 1, rows.length, 3).setValues(rows);
+    sheet.getRange(2, 1, Math.max(1, sheet.getMaxRows() - 1), 3).setNumberFormat("@");
+    return created
+      ? `Created List tab (${defaults.courses.length} courses, ${defaults.years.length} years, ${defaults.sections.length} sections)`
+      : "Populated default List options";
+  }
+  const currentHeaders = sheet.getRange(1, 1, 1, 3).getValues()[0];
+  let dirty = false;
+  const merged = headers.map((h, idx) => {
+    if (String(currentHeaders[idx] || "").trim() === "") {
+      dirty = true;
+      return h;
+    }
+    return currentHeaders[idx];
+  });
+  if (dirty) sheet.getRange(1, 1, 1, 3).setValues([merged]);
+  return "Existing List options preserved";
+}
+
+function getListDropdownOptions_(ss) {
+  const defaults = getDefaultListColumns_();
+  const sheet = ss.getSheetByName("List");
+  if (!sheet || sheet.getLastRow() <= 1) return defaults;
+  const rowCount = Math.min(sheet.getLastRow() - 1, 200);
+  const rows = sheet.getRange(2, 1, rowCount, 3).getValues();
+  const collect = (colIdx, fallback) => {
+    const seen = new Set();
+    const out = [];
+    for (let i = 0; i < rows.length; i++) {
+      const raw = rows[i][colIdx];
+      const val = String(raw === undefined || raw === null ? "" : raw)
+        .replace(/[\x00-\x1f\x7f]/g, "")
+        .trim()
+        .substring(0, 80);
+      if (val && !seen.has(val)) {
+        seen.add(val);
+        out.push(val);
+      }
+    }
+    return out.length ? out : fallback;
+  };
+  return {
+    courses: collect(0, defaults.courses),
+    years: collect(1, defaults.years),
+    sections: collect(2, defaults.sections),
+  };
+}
+
+function applyFormDropdownsFromList_(form, ss, preloaded) {
+  const opts = preloaded || getListDropdownOptions_(ss);
+  // Remove legacy free-text "Section" question if present on an older Form
+  const legacyTextSection = form
+    .getItems(FormApp.ItemType.TEXT)
+    .find((it) => String(it.getTitle() || "").trim() === "Section");
+  if (legacyTextSection && typeof form.deleteItem === "function") {
+    try {
+      form.deleteItem(legacyTextSection);
+    } catch (e) {}
+  }
+
+  const ensureListQuestion = (title, helpText, choices) => {
+    const existing = form
+      .getItems(FormApp.ItemType.LIST)
+      .find((it) => String(it.getTitle() || "").trim() === title);
+    const listItem = existing
+      ? existing.asListItem()
+      : form.addListItem().setTitle(title);
+    listItem.setHelpText(helpText).setChoiceValues(choices).setRequired(true);
+  };
+
+  ensureListQuestion(
+    "Course / Program",
+    "Select your Course / Program (editable by admins in the List tab)",
+    opts.courses,
+  );
+  ensureListQuestion(
+    "Year Level",
+    "Select your Year Level (e.g. 1, 2, 3, 4)",
+    opts.years,
+  );
+  ensureListQuestion(
+    "Section",
+    "Select your Section number or letter (e.g. 1, 2, 3, A)",
+    opts.sections,
+  );
+  return opts;
+}
+
+function syncFormDropdownsFromList_(ss) {
+  const formId =
+    PropertiesService.getScriptProperties().getProperty(
+      "REGISTRATION_FORM_ID",
+    ) || "";
+  if (!formId) return "No linked Form yet (optional)";
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) return "Skipped (Form sync busy)";
+  try {
+    const form = FormApp.openById(formId);
+    const opts = applyFormDropdownsFromList_(form, ss);
+    return `Synced ${opts.courses.length} courses, ${opts.years.length} years, ${opts.sections.length} sections`;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function ensureConfigKeys_(ss) {
