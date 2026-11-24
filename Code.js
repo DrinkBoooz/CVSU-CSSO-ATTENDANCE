@@ -682,6 +682,14 @@ function onSheetEdit(e) {
     } else if (name === "Attendance Log") {
       const cfg = getConfig_();
       invalidateEventSeenIndex_(cfg.EVENT_ID);
+    } else if (name === "Config" && e.range.getRow) {
+      const editedRow = e.range.getRow();
+      if (editedRow > 1) {
+        const editedKey = String(sheet.getRange(editedRow, 1).getValue() || "").trim();
+        if (editedKey === "PORTAL_BASE_URL" || editedKey === "WEB_APP_URL") {
+          syncPortalLinksToConfig_(SpreadsheetApp.getActiveSpreadsheet());
+        }
+      }
     }
   } catch (err) {
     // ignore trigger errors
@@ -1739,6 +1747,59 @@ function upsertConfigRow_(configSheet, key, value, notes) {
   configSheet.appendRow([key, value, notes || ""]);
 }
 
+function resolvePortalUrls_(ss) {
+  const prodPortalBase = "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE";
+  const gasExecRe =
+    /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
+  const prodExecUrl =
+    "https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec";
+  let portalBase = prodPortalBase;
+  let webAppUrl = "";
+  const cfgSheet = ss.getSheetByName("Config");
+  if (cfgSheet && cfgSheet.getLastRow() > 1) {
+    const cfgRows = cfgSheet.getDataRange().getValues();
+    for (let i = 1; i < cfgRows.length; i++) {
+      const cfgKey = String(cfgRows[i][0] || "").trim();
+      const cfgVal = String(cfgRows[i][1] || "").trim();
+      if (cfgKey === "PORTAL_BASE_URL" && /^https:\/\/.+/.test(cfgVal)) {
+        portalBase = cfgVal.replace(/\/+$/, "");
+      } else if (cfgKey === "WEB_APP_URL" && cfgVal) {
+        webAppUrl = cfgVal;
+      }
+    }
+  }
+  const apiQuery =
+    gasExecRe.test(webAppUrl) &&
+    (webAppUrl !== prodExecUrl || portalBase !== prodPortalBase)
+      ? `?api=${encodeURIComponent(webAppUrl)}`
+      : "";
+  return {
+    portalBase,
+    webAppUrl,
+    scannerUrl: `${portalBase}/${apiQuery}`,
+    passPortalUrl: `${portalBase}/pass.html${apiQuery}`,
+  };
+}
+
+function syncPortalLinksToConfig_(ss) {
+  const configSheet = ss.getSheetByName("Config");
+  if (!configSheet) return "Missing Config tab";
+  const urls = resolvePortalUrls_(ss);
+  upsertConfigRow_(
+    configSheet,
+    "SCANNER_PORTAL_URL",
+    urls.scannerUrl,
+    "Clickable Usher QR Scanner link (auto-synced from PORTAL_BASE_URL & WEB_APP_URL)",
+  );
+  upsertConfigRow_(
+    configSheet,
+    "PASS_PORTAL_URL",
+    urls.passPortalUrl,
+    "Clickable Student QR Pass Portal link (auto-synced from PORTAL_BASE_URL & WEB_APP_URL)",
+  );
+  return "Synced Scanner & Pass Portal URLs";
+}
+
 function setupRegistrationFormAndTrigger() {
   const ui = SpreadsheetApp.getUi();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -1809,32 +1870,8 @@ function setupRegistrationFormAndTrigger() {
   } catch (e) {
     // setRequireLogin is Workspace-domain specific; ignore on personal accounts
   }
-  const prodPortalBase = "https://drinkboooz.github.io/CVSU-CSSO-ATTENDANCE";
-  const gasExecRe = /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/;
-  const prodExecUrl =
-    "https://script.google.com/macros/s/AKfycbwUMbXFKERYyNEWdGgDavVR4miCPD7OsDPBud_YsjSe3FbPdW-UiN26gclamX8UD_ou/exec";
-  let portalBase = prodPortalBase;
-  let webAppUrl = "";
-  const cfgSheetForPortal = ss.getSheetByName("Config");
-  if (cfgSheetForPortal && cfgSheetForPortal.getLastRow() > 1) {
-    const cfgRows = cfgSheetForPortal.getDataRange().getValues();
-    for (let i = 1; i < cfgRows.length; i++) {
-      const cfgKey = String(cfgRows[i][0] || "").trim();
-      const cfgVal = String(cfgRows[i][1] || "").trim();
-      if (cfgKey === "PORTAL_BASE_URL" && /^https:\/\/.+/.test(cfgVal)) {
-        portalBase = cfgVal.replace(/\/+$/, "");
-      } else if (cfgKey === "WEB_APP_URL" && cfgVal) {
-        webAppUrl = cfgVal;
-      }
-    }
-  }
-  let portalUrl = `${portalBase}/pass.html`;
-  if (
-    gasExecRe.test(webAppUrl) &&
-    (webAppUrl !== prodExecUrl || portalBase !== prodPortalBase)
-  ) {
-    portalUrl = `${portalUrl}?api=${encodeURIComponent(webAppUrl)}`;
-  }
+  const portalUrls = resolvePortalUrls_(ss);
+  const portalUrl = portalUrls.passPortalUrl;
 
   form.setConfirmationMessage(
     `Registration received for ${cfg.EVENT_TITLE} (${cfg.EVENT_ID})!\n\n` +
@@ -1902,6 +1939,7 @@ function setupRegistrationFormAndTrigger() {
       editUrl,
       `Admin editable Form link (Form ID: ${formId})`,
     );
+    syncPortalLinksToConfig_(ss);
   }
 
   ui.alert(
@@ -1911,10 +1949,19 @@ function setupRegistrationFormAndTrigger() {
     `Zero-Email Registration Form & Roster Sync is now ACTIVE!\n\n` +
       `Students submit this Form -> auto-syncs to Roster -> download their QR Pass on pass.html (unlimited, 0 emails used).\n\n` +
       `Shareable Form URL (saved in Config):\n${publishedUrl}\n\n` +
-      `Form Edit URL (saved in Config):\n${editUrl}`,
+      `Form Edit URL (saved in Config):\n${editUrl}\n\n` +
+      `Student Pass Portal URL (saved in Config):\n${portalUrl}\n\n` +
+      `Usher Scanner URL (saved in Config):\n${portalUrls.scannerUrl}`,
     ui.ButtonSet.OK,
   );
-  return { ok: true, formId, publishedUrl, editUrl, portalUrl };
+  return {
+    ok: true,
+    formId,
+    publishedUrl,
+    editUrl,
+    portalUrl,
+    scannerUrl: portalUrls.scannerUrl,
+  };
 }
 
 /**
@@ -2775,6 +2822,7 @@ function applyAllSystemUpgrades() {
   };
 
   runStep("Config Keys & Validation", () => ensureConfigKeys_(ss));
+  runStep("Portal Links in Config", () => syncPortalLinksToConfig_(ss));
   runStep("Registration Form Config Links", () =>
     syncRegistrationFormConfigLinks_(ss),
   );
